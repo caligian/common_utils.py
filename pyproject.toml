@@ -5,19 +5,16 @@ authors = [{name = "Krunal Pamkar", email="kpamkar@gmail.com"}]
 description = 'Common utility functions that might be useful'
 readme = 'README.md'
 requires-python = ">= 3.11"
-license = {text = "MIT"}
+license = "MIT"
 dependencies = ["pyfzf", "termcolor"]
 
 [project.urls]
-"Homepage" = "https://github.com/caligian/nested_tables"
-"Source" = "https://github.com/caligian/nested_tables"
+"Homepage" = "https://github.com/caligian/common_utils.py"
+"Source" = "https://github.com/caligian/common_utils.py"
 
 [tool.pytest.ini_options]
 addopts = ["--import-mode=importlib"]
-pythonpath = "src/pyutils"
-
-[tool.setuptools.packages.find]
-where = ["src/common_utils"]
+pythonpath = "src/common_utils"
 
 [tool.ruff.lint.pyflakes]
 allowed-unused-imports = ["common_utils"]

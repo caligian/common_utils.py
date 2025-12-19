@@ -10,7 +10,7 @@ from typing import Callable
 from glob import glob
 from collections import namedtuple as nt
 from json import load as json_load, dump as json_dump
-from functools import reduce_
+from functools import reduce as reduce_
 # from .input import menu
 
 Pattern = re.Pattern
