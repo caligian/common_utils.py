@@ -2,16 +2,68 @@ import os
 import re
 import subprocess
 
+from pickle import load as pkl_load, dump as pkl_dump
+from csv import reader as csv_reader, writer as csv_writer
 from termcolor import cprint
 from functools import partial as _partial
 from typing import Callable
 from glob import glob
+from collections import namedtuple as nt
+from json import load as json_load, dump as json_dump
+from functools import reduce_
 # from .input import menu
 
 Pattern = re.Pattern
-partial = _partial
 Container = list | tuple | dict
 Sequence = list | tuple
+
+partial = _partial
+namedtuple = nt
+reduce = reduce_
+
+
+def read_json(filename: str) -> any:
+    with open(filename, "r") as fh:
+        return json_load(fh)
+
+
+def write_json(filename: str, obj: any) -> None:
+    with open(filename, "w") as fh:
+        json_dump(obj, fh)
+
+
+def read_pkl(filename: str) -> any:
+    with open(filename, "rb") as fh:
+        return pkl_load(fh)
+
+
+def write_pkl(filename: str, obj: any) -> any:
+    with open(filename, "wb") as fh:
+        return pkl_dump(obj, fh)
+
+
+def read_csv(filename: str, read_all: bool = True) -> list[str]:
+    with open(filename) as fh:
+        if read_all:
+            return [line for line in csv_reader(fh)]
+        else:
+            return csv_reader(fh)
+
+
+def write_csv(filename: str, lines: str | list[str], sep: str = r"\n") -> int:
+    with open(filename, "w") as fh:
+        writer = csv_writer(fh)
+        size = 0
+
+        if type(lines) is str and r"\n" in lines:
+            size = len(size)
+            lines = lines.split(r"\n")
+        elif type(lines) is list:
+            size = sum(map(len, lines))
+
+        writer.writerows(lines)
+        return size
+
 
 def seq_along(xs: Sequence) -> list[int]:
     return list(range(len(xs)))
@@ -491,4 +543,14 @@ __all__ = [
     "find_mounts",
     "find_dirs",
     "unwrap",
+    "partial",
+    "read_csv",
+    "write_csv",
+    "read_pkl",
+    "write_pkl",
+    "read_json",
+    "write_json",
+    "partial",
+    "namedtuple",
+    "reduce",
 ]
