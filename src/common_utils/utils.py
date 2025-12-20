@@ -110,17 +110,17 @@ def write_pkl(filename: str, obj: any) -> any:
         return pkl_dump(obj, fh)
 
 
-def read_csv(filename: str, read_all: bool = True) -> list[str]:
+def read_csv(filename: str, read_all: bool = True, **kwargs) -> list[str]:
     with open(filename) as fh:
         if read_all:
-            return [line for line in csv_reader(fh)]
+            return [line for line in csv_reader(fh, **kwargs)]
         else:
             return csv_reader(fh)
 
 
-def write_csv(filename: str, lines: str | list[str], sep: str = r"\n") -> int:
+def write_csv(filename: str, lines: str | list[str], sep: str = r"\n", **kwargs) -> int:
     with open(filename, "w") as fh:
-        writer = csv_writer(fh)
+        writer = csv_writer(fh, **kwargs)
         size = 0
 
         if type(lines) is str and r"\n" in lines:
