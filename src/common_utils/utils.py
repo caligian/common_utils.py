@@ -1,15 +1,27 @@
 import os
 import re
 import subprocess
+import datetime
+import shutil
 
-from pickle import load as pkl_load, dump as pkl_dump
+from pickle import (
+    load as pkl_load,
+    dump as pkl_dump,
+    loads as _load_pkl,
+    dumps as _dump_pkl,
+)
 from csv import reader as csv_reader, writer as csv_writer
 from termcolor import cprint
 from functools import partial as _partial
 from typing import Callable
 from glob import glob
 from collections import namedtuple as nt
-from json import load as json_load, dump as json_dump
+from json import (
+    load as json_load,
+    dump as json_dump,
+    loads as _load_json,
+    dumps as _dump_json,
+)
 from functools import reduce as reduce_
 # from .input import menu
 
@@ -17,9 +29,65 @@ Pattern = re.Pattern
 Container = list | tuple | dict
 Sequence = list | tuple
 
+load_pkl = _load_pkl
+dump_pkl = _dump_pkl
+load_json = _load_json
+dump_json = _dump_json
 partial = _partial
 namedtuple = nt
 reduce = reduce_
+mkdir = os.makedirs
+
+
+def rm(path: str, **kwargs) -> bool:
+    if not os.path.exists(path):
+        return False
+    elif os.path.isdir(path):
+        shutil.rmtree(path, **kwargs)
+    else:
+        os.remove(path, **kwargs)
+
+    return True
+
+
+def strptime(
+    fmt: str,
+    date_str: str,
+    *args,
+    use_date: bool = False,
+    use_datetime: bool = True,
+    use_time: bool = False,
+    **kwargs,
+) -> str:
+    cls = None
+    if use_date:
+        cls = datetime.date
+    elif use_datetime:
+        cls = datetime.datetime
+    elif use_time:
+        cls = datetime.time
+
+    fn = cls.strptime
+    return fn(date_str, fmt)
+
+
+def strftime(
+    fmt: str,
+    *args,
+    use_date: bool = False,
+    use_datetime: bool = True,
+    use_time: bool = False,
+    **kwargs,
+) -> str:
+    cls = None
+    if use_date:
+        cls = datetime.date
+    elif use_datetime:
+        cls = datetime.datetime
+    elif use_time:
+        cls = datetime.time
+
+    return cls(*args, **kwargs).strftime(fmt)
 
 
 def read_json(filename: str) -> any:
@@ -107,7 +175,7 @@ def tbl_get(
 ) -> list[any]:
     res = []
     for k in ks:
-        if type(k) is list or type(k) is tuple:
+        if sequence(k):
             match assoc(xs, k):
                 case (True, x, _):
                     res.append(x)
@@ -182,15 +250,15 @@ def endswith(s: str, pattern: str | Pattern, **kwargs) -> re.Match | None:
     return re.search(pattern + "$", s, **kwargs)
 
 
-def is_int(s: str, strip_whitespace: bool = False) -> bool:
+def str_is_int(s: str, strip_whitespace: bool = False) -> bool:
     if strip_whitespace:
         s = re.sub(r"\s+", "", s)
 
     return grep(s, "^[0-9]+$") is not None
 
 
-def parse_int(s: str, strip_whitespace: bool = False) -> int | None:
-    if is_int(s, strip_whitespace=strip_whitespace):
+def as_int(s: str, strip_whitespace: bool = False) -> int | None:
+    if str_is_int(s, strip_whitespace=strip_whitespace):
         s = re.sub(r"\s+", "", s)
         try:
             return int(s)
@@ -198,14 +266,14 @@ def parse_int(s: str, strip_whitespace: bool = False) -> int | None:
             return
 
 
-def is_float(s: str, strip_whitespace: bool = False) -> bool:
+def str_is_float(s: str, strip_whitespace: bool = False) -> bool:
     if strip_whitespace:
         s = re.sub(r"\s+", "", s)
 
     return grep(s, "^[0-9]+[.][0-9]+$") is not None
 
 
-def parse_float(s: str, strip_whitespace: bool = False) -> float | None:
+def as_float(s: str, strip_whitespace: bool = False) -> float | None:
     if strip_whitespace:
         s = re.sub(r"\s+", "", s)
 
@@ -316,13 +384,11 @@ def spit(
 
 
 def sequence(xs: list | tuple) -> bool:
-    t = type(xs)
-    return t is tuple or t is list
+    return isinstance(xs, (tuple, list))
 
 
 def container(xs: dict | list | tuple) -> bool:
-    t = type(xs)
-    return t is tuple or t is list or t is dict
+    return isinstance(xs, (tuple, int, dict))
 
 
 def flatten(xs: list | tuple, maxdepth: int = -1) -> list:
@@ -444,7 +510,7 @@ def whereis(binary: str) -> list[str]:
     return [x for x in out if os.access(x, os.X_OK)]
 
 
-def find_files(
+def ls(
     d: str,
     pattern: str = ".+",
     exclude: str | None = None,
@@ -485,16 +551,36 @@ def find_files(
         return files
 
 
-def find_links(d: str, pattern: str, exclude: str | None = None) -> list[str]:
-    return find_files(d, pattern, links_only=True)
+def ls_links(
+    d: str,
+    pattern: str = ".+",
+    exclude: str | None = None,
+) -> list[str]:
+    return ls(d, pattern, links_only=True)
 
 
-def find_mounts(d: str, pattern: str, exclude: str | None = None) -> list[str]:
-    return find_files(d, pattern, mounts_only=True)
+def ls_mounts(
+    d: str,
+    pattern: str = ".+",
+    exclude: str | None = None,
+) -> list[str]:
+    return ls(d, pattern, mounts_only=True)
 
 
-def find_dirs(d: str, pattern: str, exclude: str | None = None) -> list[str]:
-    return find_files(d, pattern, dirs_only=True)
+def ls_dirs(
+    d: str,
+    pattern: str = ".+",
+    exclude: str | None = None,
+) -> list[str]:
+    return ls(d, pattern, dirs_only=True)
+
+
+def ls_files(
+    d: str,
+    pattern: str = ".+",
+    exclude: str | None = None,
+) -> list[str]:
+    return ls(d, pattern, files_only=True)
 
 
 def unwrap(xs: Sequence) -> any:
@@ -502,7 +588,87 @@ def unwrap(xs: Sequence) -> any:
     return xs[0]
 
 
+def push(xs: list, *elements: any, index: int | None = None) -> list:
+    for e in elements:
+        if index:
+            xs.append(e)
+        else:
+            xs.insert(index, e)
+
+
+def reverse(xs: tuple | list | str) -> tuple | list | str:
+    return xs[::-1]
+
+
+def unpush(xs: list, *elements: any) -> list:
+    for e in elements[::-1]:
+        xs.insert(0, e)
+
+
+def extend(xs: list, *elements: any) -> list:
+    for e in elements:
+        if sequence(e):
+            xs.extend(list(e))
+        else:
+            xs.append(e)
+
+
+def lextend(xs: list, *elements: any) -> list:
+    for e in elements:
+        if sequence(e):
+            for _e in reverse(e):
+                unpush(xs, _e)
+        else:
+            xs.insert(0, e)
+
+    return xs
+
+
+def identity(element: any) -> any:
+    return element
+
+
+def pop(
+    xs: list | dict,
+    index: int | str = -1,
+    default: Callable = lambda: None,
+) -> list | dict:
+    if type(index) is int and index < 0:
+        index += len(xs)
+
+    if isinstance(xs, list):
+        xs: list
+        return xs.pop(index)
+    else:
+        xs: dict
+        return xs.pop(index)
+
+
+def shift(xs: list) -> list:
+    return pop(xs, 0)
+
+
+def popn(xs: list, n: int = 1, index: int = -1, reverse: bool = False) -> list[any]:
+    res = []
+    for i in range(n):
+        res.append(xs.pop(index))
+
+    if reverse:
+        return res[::-1]
+    else:
+        return res
+
+
+def shiftn(xs: list, n: int = 1, index: int = -1, reverse: bool = False) -> list[any]:
+    return popn(xs, n, index=0, reverse=reverse)
+
+
 __all__ = [
+    "popn",
+    "pop",
+    "shift",
+    "shiftn",
+    "identity",
     "seq_along",
     "failure",
     "message",
@@ -515,10 +681,10 @@ __all__ = [
     "grep",
     "startswith",
     "endswith",
-    "is_int",
-    "parse_int",
-    "is_float",
-    "parse_float",
+    "str_is_int",
+    "as_int",
+    "as_float",
+    "str_is_float",
     "sed",
     "system",
     "systemlist",
@@ -538,10 +704,11 @@ __all__ = [
     "unlessNone",
     "pcall",
     "whereis",
-    "find_files",
-    "find_links",
-    "find_mounts",
-    "find_dirs",
+    "ls",
+    "ls_files",
+    "ls_links",
+    "ls_mounts",
+    "ls_dirs",
     "unwrap",
     "partial",
     "read_csv",
@@ -553,4 +720,16 @@ __all__ = [
     "partial",
     "namedtuple",
     "reduce",
+    "push",
+    "unpush",
+    "extend",
+    "lextend",
+    "strftime",
+    "strptime",
+    "mkdir",
+    "rm",
+    "load_pkl",
+    "dump_pkl",
+    "load_json",
+    "dump_json",
 ]
