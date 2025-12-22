@@ -2,7 +2,9 @@ import os
 import re
 import subprocess
 import datetime
+import sys
 import shutil
+import copy
 
 from pickle import (
     load as pkl_load,
@@ -23,12 +25,16 @@ from json import (
     dumps as _dump_json,
 )
 from functools import reduce as reduce_
+from pyfzf import FzfPrompt
 # from .input import menu
 
 Pattern = re.Pattern
 Container = list | tuple | dict
 Sequence = list | tuple
 
+deepcopy = copy.deepcopy
+shallowcopy = copy.copy
+isa = isinstance
 load_pkl = _load_pkl
 dump_pkl = _dump_pkl
 load_json = _load_json
@@ -37,6 +43,32 @@ partial = _partial
 namedtuple = nt
 reduce = reduce_
 mkdir = os.makedirs
+is_dir = os.path.isdir
+is_file = os.path.isfile
+is_mount = os.path.ismount
+is_link = os.path.islink
+is_junction = os.path.isjunction
+path_exists = os.path.exists
+rmtree = shutil.rmtree
+date = datetime.date
+datetime = datetime.datetime
+time = datetime.time
+
+
+def blank(s: str | list | tuple | dict) -> bool:
+    return len(s) == 0
+
+
+def not_blank(s: str | list | tuple | dict) -> bool:
+    return len(s) > 0
+
+
+def ARGV() -> list[str]:
+    return sys.argv
+
+
+def has_argv() -> bool:
+    return len(sys.argv) != 1
 
 
 def rm(path: str, **kwargs) -> bool:
@@ -118,7 +150,12 @@ def read_csv(filename: str, read_all: bool = True, **kwargs) -> list[str]:
             return csv_reader(fh)
 
 
-def write_csv(filename: str, lines: str | list[str], sep: str = r"\n", **kwargs) -> int:
+def write_csv(
+    filename: str,
+    lines: str | list[str],
+    sep: str = r"\n",
+    **kwargs,
+) -> int:
     with open(filename, "w") as fh:
         writer = csv_writer(fh, **kwargs)
         size = 0
@@ -133,8 +170,11 @@ def write_csv(filename: str, lines: str | list[str], sep: str = r"\n", **kwargs)
         return size
 
 
-def seq_along(xs: Sequence) -> list[int]:
-    return list(range(len(xs)))
+def seq_along(xs: Container) -> list[int]:
+    if isa(xs, (list, tuple)):
+        return list(range(len(xs)))
+    else:
+        return list(xs.keys())
 
 
 def failure(*s: str, color: str = "red", **kwargs) -> None:
@@ -150,22 +190,38 @@ def success(*s: str, color: str = "green", **kwargs) -> None:
 
 
 def foreach(
-    s: Container,
+    tbl: Container,
     apply: Callable[[int | str, any], any] = lambda _, x: x,
     keep: Callable[[int | str, any], any] = lambda _, __: True,
     exclude: Callable[[int | str], any] = lambda _, __: False,
 ) -> Container:
-    if type(s) is dict:
+    if type(tbl) is dict:
         res = {}
-        for k, v in s.items():
+        for k, v in tbl.items():
             if keep(k, v) and not exclude(k, v):
                 res[k] = apply(k, v)
 
         return res
 
-    return type(s)(
-        apply(i, x) for i, x in enumerate(s) if keep(i, x) and not exclude(i, x)
+    return type(tbl)(
+        apply(i, x) for i, x in enumerate(tbl) if keep(i, x) and not exclude(i, x)
     )
+
+
+def keep(tbl: Container, f: Callable[[int | str, any], any]) -> Container:
+    return foreach(tbl, keep=f)
+
+
+def tbl_apply(tbl: Container, f: Callable[[int | str, any], any]) -> Container:
+    return foreach(tbl, apply=f)
+
+
+def tbl_keep(tbl: Container, f: Callable[[int | str, any], any]) -> Container:
+    return foreach(tbl, keep=f)
+
+
+def tbl_exclude(tbl: Container, f: Callable[[int | str, any], any]) -> Container:
+    return foreach(tbl, exclude=f)
 
 
 def tbl_get(
@@ -174,46 +230,48 @@ def tbl_get(
     pcall: bool = True,
 ) -> list[any]:
     res = []
+
     for k in ks:
-        if sequence(k):
-            match assoc(xs, k):
-                case (True, x, _):
-                    res.append(x)
-                case (Exception(error), _, _):
-                    if not pcall:
-                        raise error
-                    else:
-                        return None
-        else:
-            try:
-                res.append(xs[k])
-            except (KeyError, IndexError) as error:
+        match assoc(xs, k):
+            case (True, x, _):
+                res.append(x)
+            case (False, error, _):
                 if not pcall:
                     raise error
                 else:
-                    res.append(None)
+                    res.append(error)
 
     return res
 
 
-def tbl_set(xs: Container, *keys_and_values: any, pcall: bool = True) -> Container:
-    keys_and_values_len = len(keys_and_values)
-    if keys_and_values_len == 0:
+def tbl_has(xs: Container, *ks: int | str | list[int | str]) -> list[any]:
+    res = []
+
+    for k in ks:
+        match assoc(xs, k):
+            case (True, _, _):
+                res.append(True)
+            case (False, _, _):
+                res.append(False)
+
+    return res
+
+
+def tbl_set(
+    xs: Container,
+    *keys_and_values: tuple[any, any],
+    pcall: bool = True,
+) -> Container | Exception:
+    if len(keys_and_values) == 0:
         return xs
-    elif keys_and_values_len % 2 != 0:
-        raise AssertionError(
-            f"keys_and_values_len {keys_and_values_len} should be even in number"
-        )
 
-    for i in range(0, keys_and_values_len, 2):
-        k = keys_and_values[i]
-        v = keys_and_values[i + 1]
-
-        try:
-            assoc(xs, k, value=v)
-        except Exception as error:
-            if not pcall:
-                raise error
+    for k, v in keys_and_values:
+        match assoc(xs, k, value=v):
+            case (True, _value, _level):
+                continue
+            case (False, error, _level):
+                if not pcall:
+                    raise error
 
     return xs
 
@@ -240,6 +298,22 @@ def grep(
     **kwargs,
 ) -> re.Match | None:
     return re.search(pattern, s, **kwargs)
+
+
+def tbl_grep(
+    tbl: Container,
+    pattern: str | Pattern,
+    **kwargs,
+) -> dict[any, re.Match] | list[re.Match]:
+    return tbl_keep(tbl, lambda _, v: re.search(pattern, v, **kwargs))
+
+
+def tbl_grepv(
+    tbl: Container,
+    pattern: str | Pattern,
+    **kwargs,
+) -> dict[any, re.Match] | list[re.Match]:
+    return tbl_exclude(tbl, lambda _, v: re.search(pattern, v, **kwargs))
 
 
 def startswith(s: str, pattern: str | Pattern, **kwargs) -> re.Match | None:
@@ -285,11 +359,23 @@ def as_float(s: str, strip_whitespace: bool = False) -> float | None:
 
 def sed(
     s: str,
-    pattern: str | Pattern,
-    repl: str,
+    patterns_and_replacements: str | Pattern,
     **kwargs,
-) -> re.Match | None:
-    return re.sub(pattern, repl, s, **kwargs)
+) -> str:
+    pr_len = len(patterns_and_replacements)
+    if pr_len == 0:
+        return s
+    elif pr_len % 2 != 0:
+        raise AssertionError(
+            f"Patterns and replacements arguments length {pr_len} is not even in number"
+        )
+
+    for i in range(0, len(patterns_and_replacements), 2):
+        pattern = patterns_and_replacements[i]
+        repl = patterns_and_replacements[i + 1]
+        s = re.sub(pattern, repl, s, **kwargs)
+
+    return s
 
 
 def system(
@@ -384,11 +470,11 @@ def spit(
 
 
 def sequence(xs: list | tuple) -> bool:
-    return isinstance(xs, (tuple, list))
+    return isa(xs, (tuple, list))
 
 
 def container(xs: dict | list | tuple) -> bool:
-    return isinstance(xs, (tuple, int, dict))
+    return isa(xs, (tuple, int, dict))
 
 
 def flatten(xs: list | tuple, maxdepth: int = -1) -> list:
@@ -415,13 +501,13 @@ def assoc(
     d: Container,
     ks: any,
     value: any = None,
-) -> tuple[bool | Exception, any, Container | None]:
+) -> tuple[bool, any, Container]:
     v = d
     for k in ks[:-1]:
         try:
             v = v[k]
         except Exception as error:
-            return (error, None)
+            return (False, error, v)
 
     k = ks[-1]
     try:
@@ -429,7 +515,7 @@ def assoc(
             v[k] = value
         return (True, v[k], v)
     except Exception as error:
-        return (error, None, None)
+        return (False, error, v)
 
 
 def as_list(xs: any, force: bool = False) -> list:
@@ -493,12 +579,12 @@ def unlessNone(
         return value
 
 
-def pcall(f, *args, **kwargs) -> tuple[bool | Exception, any]:
+def pcall(f, *args, **kwargs) -> tuple[bool, any]:
     try:
         output = f(*args, **kwargs)
         return (True, output)
     except Exception as error:
-        return (error, None)
+        return (False, error)
 
 
 def whereis(binary: str) -> list[str]:
@@ -514,11 +600,10 @@ def ls(
     d: str,
     pattern: str = ".+",
     exclude: str | None = None,
-    dirs_only: bool = False,
-    files_only: bool = False,
-    links_only: bool = False,
-    mounts_only: bool = False,
-) -> list[str]:
+    include: str = "dflmj",
+    stat: bool = False,
+    follow_symlinks: bool = False,
+) -> list[str] | list[tuple[str, os.stat_result]]:
     pattern = re.compile(pattern, flags=re.I + re.M)
     files: list[str] = glob(f"{d}/*") + glob(f"{d}/.*")
     exclude = exclude and re.compile(exclude, flags=re.I + re.M) or None
@@ -535,52 +620,30 @@ def ls(
         )
     )
 
-    if dirs_only or files_only or links_only or mounts_only:
-        res = []
-        for f in files:
-            if dirs_only and os.path.isdir(f):
-                res.append(f)
-            elif files_only and os.path.isfile(f):
-                res.append(f)
-            elif links_only and os.path.islink(f):
-                res.append(f)
-            elif mounts_only and os.path.ismount(f):
-                res.append(f)
-        return res
-    else:
-        return files
+    res = []
+    d = "d" in include
+    f = "f" in include
+    lnk = "l" in include
+    m = "m" in include
+    j = "j" in include
 
+    def append_file(filename: str) -> None:
+        if stat:
+            res.append((filename, os.stat(filename)))
+        else:
+            res.append(filename)
 
-def ls_links(
-    d: str,
-    pattern: str = ".+",
-    exclude: str | None = None,
-) -> list[str]:
-    return ls(d, pattern, links_only=True)
+    for file in files:
+        if (
+            (d and is_dir(file))
+            or (f and is_file(file))
+            or (lnk and is_link(file))
+            or (m and is_mount(file))
+            or (j and is_junction(file))
+        ):
+            append_file(file)
 
-
-def ls_mounts(
-    d: str,
-    pattern: str = ".+",
-    exclude: str | None = None,
-) -> list[str]:
-    return ls(d, pattern, mounts_only=True)
-
-
-def ls_dirs(
-    d: str,
-    pattern: str = ".+",
-    exclude: str | None = None,
-) -> list[str]:
-    return ls(d, pattern, dirs_only=True)
-
-
-def ls_files(
-    d: str,
-    pattern: str = ".+",
-    exclude: str | None = None,
-) -> list[str]:
-    return ls(d, pattern, files_only=True)
+    return res
 
 
 def unwrap(xs: Sequence) -> any:
@@ -588,40 +651,52 @@ def unwrap(xs: Sequence) -> any:
     return xs[0]
 
 
-def push(xs: list, *elements: any, index: int | None = None) -> list:
+def push(xs: Sequence, *elements: any, index: int | None = None) -> Sequence:
+    cls = type(xs)
+    xs = list(xs)
+
     for e in elements:
         if index:
             xs.append(e)
         else:
             xs.insert(index, e)
 
+    return cls(xs)
+
 
 def reverse(xs: tuple | list | str) -> tuple | list | str:
     return xs[::-1]
 
 
-def unpush(xs: list, *elements: any) -> list:
-    for e in elements[::-1]:
-        xs.insert(0, e)
+def unpush(xs: Sequence, *elements: any) -> Sequence:
+    return push(xs, *elements[::-1], index=0)
 
 
-def extend(xs: list, *elements: any) -> list:
+def extend(xs: Sequence, *elements: any) -> Sequence:
+    cls = type(xs)
+    xs = list(xs)
+
     for e in elements:
         if sequence(e):
             xs.extend(list(e))
         else:
             xs.append(e)
 
+    return cls(xs)
 
-def lextend(xs: list, *elements: any) -> list:
-    for e in elements:
+
+def lextend(xs: list, *elements: any) -> Sequence:
+    cls = type(xs)
+    xs = list(xs)
+
+    for e in elements[::-1]:
         if sequence(e):
             for _e in reverse(e):
                 unpush(xs, _e)
         else:
             xs.insert(0, e)
 
-    return xs
+    return cls(xs)
 
 
 def identity(element: any) -> any:
@@ -631,27 +706,42 @@ def identity(element: any) -> any:
 def pop(
     xs: list | dict,
     index: int | str = -1,
-    default: Callable = lambda: None,
-) -> list | dict:
-    if type(index) is int and index < 0:
-        index += len(xs)
+    default: Callable | None = None,
+    pcall: bool = True,
+) -> any:
+    if type(xs) is dict and type(index) is int:
+        index = list(xs.keys())[index]
 
-    if isinstance(xs, list):
-        xs: list
+    try:
         return xs.pop(index)
-    else:
-        xs: dict
-        return xs.pop(index)
+    except (IndexError, KeyError) as error:
+        if default:
+            return default()
+        elif pcall:
+            return error
+        else:
+            raise error
 
 
-def shift(xs: list) -> list:
-    return pop(xs, 0)
+def shift(
+    xs: list,
+    default: Callable | None = None,
+    pcall: bool = True,
+) -> list:
+    return pop(xs, index=0, default=default, pcall=pcall)
 
 
-def popn(xs: list, n: int = 1, index: int = -1, reverse: bool = False) -> list[any]:
+def popn(
+    xs: list,
+    n: int = 1,
+    index: int | str = -1,
+    reverse: bool = False,
+    pcall: bool = True,
+    default: Callable | None = None,
+) -> list[any]:
     res = []
     for i in range(n):
-        res.append(xs.pop(index))
+        res.append(pop(xs, index=index, default=default, pcall=pcall))
 
     if reverse:
         return res[::-1]
@@ -659,32 +749,101 @@ def popn(xs: list, n: int = 1, index: int = -1, reverse: bool = False) -> list[a
         return res
 
 
-def shiftn(xs: list, n: int = 1, index: int = -1, reverse: bool = False) -> list[any]:
-    return popn(xs, n, index=0, reverse=reverse)
+def shiftn(
+    xs: list,
+    n: int = 1,
+    index: int = -1,
+    reverse: bool = False,
+    pcall: bool = True,
+    default: Callable | None = None,
+) -> list[any]:
+    return popn(xs, n, index=0, reverse=reverse, pcall=pcall, default=default)
+
+
+def fzf(
+    tbl: dict[str, any] | list | tuple,
+    lalign: bool = True,
+    ralign: bool = False,
+    center: bool = False,
+    bin: str | None = None,
+    skip_index: bool = False,
+) -> list:
+    lookup = dict()
+    _tbl = {}
+    longest = 0
+    display = []
+    index = seq_along(tbl)
+    _dict = isa(tbl, dict)
+
+    if not skip_index:
+        for k in index:
+            k = str(k)
+            k_len = len(k)
+
+            if longest < k_len:
+                longest = k_len
+
+    for k in index:
+        v = tbl[k]
+        if not skip_index:
+            if ralign:
+                k = f"{str(k):>{longest}} | {str(v)}"
+            elif lalign:
+                k = f"{str(k):<{longest}} | {str(v)}"
+            else:
+                k = f"{str(k):^{longest}} | {str(v)}"
+
+            lookup[k] = v
+            display.append(k)
+        elif _dict:
+            str_k = str(k)
+            lookup[str_k] = k
+            display.append(str_k)
+        else:
+            v = str(v)
+            lookup[v] = k
+            display.append(v)
+
+    _fzf = FzfPrompt(executable_path=bin)
+    choice = _fzf.prompt(display, fzf_options="--multi")
+
+    return [tbl[lookup[k]] for k in choice]
 
 
 __all__ = [
-    "popn",
-    "pop",
-    "shift",
-    "shiftn",
-    "identity",
+    "ARGV",
+    "rm",
+    "strptime",
+    "strftime",
+    "read_json",
+    "write_json",
+    "read_pkl",
+    "write_pkl",
+    "read_csv",
+    "write_csv",
     "seq_along",
     "failure",
     "message",
     "success",
     "foreach",
+    "keep",
+    "tbl_apply",
+    "tbl_keep",
+    "tbl_exclude",
     "tbl_get",
     "tbl_set",
+    "tbl_has",
     "split",
     "splitlines",
     "grep",
+    "tbl_grep",
+    "tbl_grepv",
     "startswith",
     "endswith",
     "str_is_int",
     "as_int",
-    "as_float",
     "str_is_float",
+    "as_float",
     "sed",
     "system",
     "systemlist",
@@ -705,31 +864,40 @@ __all__ = [
     "pcall",
     "whereis",
     "ls",
-    "ls_files",
-    "ls_links",
-    "ls_mounts",
-    "ls_dirs",
     "unwrap",
-    "partial",
-    "read_csv",
-    "write_csv",
-    "read_pkl",
-    "write_pkl",
-    "read_json",
-    "write_json",
-    "partial",
-    "namedtuple",
-    "reduce",
     "push",
+    "reverse",
     "unpush",
     "extend",
     "lextend",
-    "strftime",
-    "strptime",
-    "mkdir",
-    "rm",
+    "identity",
+    "pop",
+    "shift",
+    "popn",
+    "shiftn",
+    "fzf",
+    "blank",
+    "not_blank",
+    "has_argv",
+    "deepcopy",
+    "shallowcopy",
+    "isa",
     "load_pkl",
     "dump_pkl",
     "load_json",
     "dump_json",
+    "partial",
+    "namedtuple",
+    "reduce",
+    "mkdir",
+    "is_dir",
+    "is_file",
+    "is_mount",
+    "is_link",
+    "is_junction",
+    "path_exists",
+    "rmtree",
+    "date",
+    "datetime",
+    "time",
 ]
