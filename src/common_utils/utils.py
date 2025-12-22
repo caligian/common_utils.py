@@ -656,10 +656,10 @@ def push(xs: Sequence, *elements: any, index: int | None = None) -> Sequence:
     xs = list(xs)
 
     for e in elements:
-        if index:
+        if not index:
             xs.append(e)
         else:
-            xs.insert(index, e)
+            xs.append(e)
 
     return cls(xs)
 
