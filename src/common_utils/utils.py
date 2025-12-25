@@ -55,6 +55,32 @@ datetime = datetime.datetime
 time = datetime.time
 
 
+def file_extension(filename: str) -> str:
+    return filename.rsplit(".", maxsplit=1)[-1]
+
+
+def has_extension(filename: str, *pattern: str | re.Pattern) -> bool:
+    extension = file_extension(filename)
+    for p in pattern:
+        if re.search(p, extension, flags=re.I):
+            return True
+
+    return False
+
+
+def mime_type(filename: str) -> str | None:
+    out = subprocess.check_output(["file", filename])
+    out = out.decode()
+    out = out.split(":")
+    out = out[-1]
+    out = out.strip()
+
+    if startswith(out, "cannot open"):
+        return
+
+    return out
+
+
 def blank(s: str | list | tuple | dict) -> bool:
     return len(s) == 0
 
@@ -359,20 +385,10 @@ def as_float(s: str, strip_whitespace: bool = False) -> float | None:
 
 def sed(
     s: str,
-    patterns_and_replacements: str | Pattern,
+    *patterns_and_replacements: tuple[str, str],
     **kwargs,
 ) -> str:
-    pr_len = len(patterns_and_replacements)
-    if pr_len == 0:
-        return s
-    elif pr_len % 2 != 0:
-        raise AssertionError(
-            f"Patterns and replacements arguments length {pr_len} is not even in number"
-        )
-
-    for i in range(0, len(patterns_and_replacements), 2):
-        pattern = patterns_and_replacements[i]
-        repl = patterns_and_replacements[i + 1]
+    for pattern, repl in patterns_and_replacements:
         s = re.sub(pattern, repl, s, **kwargs)
 
     return s
@@ -442,21 +458,50 @@ def rstrip(s: str) -> str:
 
 def slurp(
     filename: str,
-    binary: bool = False,
-    split_nl: bool = True,
+    mode: str = "r",
+    filetype: str = "text",
+    reader: Callable[[str | bytes], any] | None = None,
+    chomp: bool = True,
 ) -> list[str] | str:
-    with open(filename, "r" if not binary else "rb") as fh:
-        text = fh.read()
-        text = split_nl and text.split("\n") or text
-        return text
+    ft_is_text = filetype in ("json", "csv", "text")
+    ft_is_pkl = filetype in ("pickle", "pkl")
+
+    if ft_is_text:
+        mode = "r"
+    elif ft_is_pkl:
+        mode = "rb"
+    else:
+        raise NotImplementedError(
+            "filetype should be any of json, csv, text, pickle, pkl"
+        )
+
+    with open(filename, mode) as fh:
+        if ft_is_text:
+            match filetype:
+                case "json":
+                    return read_json(filename)
+                case "csv":
+                    return read_csv(filename)
+                case _:
+                    if chomp:
+                        return rstrip(fh.read())
+                    else:
+                        return fh.read()
+        elif ft_is_pkl:
+            return read_pkl(filename)
+        elif callable(reader):
+            return reader(fh)
 
 
 def spit(
     filename: str,
     text: str | list[str],
-    binary: bool = False,
+    mode: str = "w",
+    format: str = "text",
 ) -> int:
-    with open(filename, "w" if not binary else "wb") as fh:
+    with open(
+        filename,
+    ) as fh:
         text_len = None
         match text:
             case list():
@@ -691,8 +736,7 @@ def lextend(xs: list, *elements: any) -> Sequence:
 
     for e in elements[::-1]:
         if sequence(e):
-            for _e in reverse(e):
-                unpush(xs, _e)
+            unpush(xs, e)
         else:
             xs.insert(0, e)
 
@@ -728,7 +772,12 @@ def shift(
     default: Callable | None = None,
     pcall: bool = True,
 ) -> list:
-    return pop(xs, index=0, default=default, pcall=pcall)
+    return pop(
+        xs,
+        index=0,
+        default=default,
+        pcall=pcall,
+    )
 
 
 def popn(
@@ -741,7 +790,14 @@ def popn(
 ) -> list[any]:
     res = []
     for i in range(n):
-        res.append(pop(xs, index=index, default=default, pcall=pcall))
+        res.append(
+            pop(
+                xs,
+                index=index,
+                default=default,
+                pcall=pcall,
+            )
+        )
 
     if reverse:
         return res[::-1]
@@ -757,7 +813,14 @@ def shiftn(
     pcall: bool = True,
     default: Callable | None = None,
 ) -> list[any]:
-    return popn(xs, n, index=0, reverse=reverse, pcall=pcall, default=default)
+    return popn(
+        xs,
+        n,
+        index=0,
+        reverse=reverse,
+        pcall=pcall,
+        default=default,
+    )
 
 
 def fzf(
@@ -808,6 +871,17 @@ def fzf(
     choice = _fzf.prompt(display, fzf_options="--multi")
 
     return [tbl[lookup[k]] for k in choice]
+
+
+def plist_get1(xs: list[tuple[any, any]])
+
+
+def plist_get(
+    xs: list[tuple[any, any]], 
+    *key: any,
+) -> any:
+    for k, v in xs:
+        if key 
 
 
 __all__ = [
@@ -900,4 +974,6 @@ __all__ = [
     "date",
     "datetime",
     "time",
+    "file_extension",
+    "has_extension",
 ]
