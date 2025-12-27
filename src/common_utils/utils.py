@@ -53,6 +53,10 @@ rmtree = shutil.rmtree
 date = datetime.date
 datetime = datetime.datetime
 time = datetime.time
+basename = os.path.basename
+dirname = os.path.dirname
+abspath = os.path.abspath
+stat = os.stat
 
 
 def file_extension(filename: str) -> str:
@@ -220,11 +224,12 @@ def foreach(
     apply: Callable[[int | str, any], any] = lambda _, x: x,
     keep: Callable[[int | str, any], any] = lambda _, __: True,
     exclude: Callable[[int | str], any] = lambda _, __: False,
+    stop_when: Callable[[int, str], bool] = lambda _, __: False,
 ) -> Container:
     if type(tbl) is dict:
         res = {}
         for k, v in tbl.items():
-            if keep(k, v) and not exclude(k, v):
+            if keep(k, v) and not exclude(k, v) and not stop_when(k, v):
                 res[k] = apply(k, v)
 
         return res
@@ -350,7 +355,7 @@ def endswith(s: str, pattern: str | Pattern, **kwargs) -> re.Match | None:
     return re.search(pattern + "$", s, **kwargs)
 
 
-def str_is_int(s: str, strip_whitespace: bool = False) -> bool:
+def is_int(s: str, strip_whitespace: bool = False) -> bool:
     if strip_whitespace:
         s = re.sub(r"\s+", "", s)
 
@@ -358,7 +363,7 @@ def str_is_int(s: str, strip_whitespace: bool = False) -> bool:
 
 
 def as_int(s: str, strip_whitespace: bool = False) -> int | None:
-    if str_is_int(s, strip_whitespace=strip_whitespace):
+    if is_int(s, strip_whitespace=strip_whitespace):
         s = re.sub(r"\s+", "", s)
         try:
             return int(s)
@@ -366,7 +371,7 @@ def as_int(s: str, strip_whitespace: bool = False) -> int | None:
             return
 
 
-def str_is_float(s: str, strip_whitespace: bool = False) -> bool:
+def is_float(s: str, strip_whitespace: bool = False) -> bool:
     if strip_whitespace:
         s = re.sub(r"\s+", "", s)
 
@@ -873,15 +878,20 @@ def fzf(
     return [tbl[lookup[k]] for k in choice]
 
 
-def plist_get1(xs: list[tuple[any, any]])
+def andgrep(s: str, *pattern: str | re.Pattern, flags=re.I) -> str | re.Pattern | None:
+    last_p = None
+    for p in pattern:
+        last_p = p
+        if not re.search(p, s, flags=flags):
+            return
+
+    return last_p
 
 
-def plist_get(
-    xs: list[tuple[any, any]], 
-    *key: any,
-) -> any:
-    for k, v in xs:
-        if key 
+def orgrep(s: str, *pattern: str | re.Pattern, flags=re.I) -> str | re.Pattern | None:
+    for p in pattern:
+        if re.search(p, s, flags=flags):
+            return p
 
 
 __all__ = [
@@ -914,9 +924,9 @@ __all__ = [
     "tbl_grepv",
     "startswith",
     "endswith",
-    "str_is_int",
+    "is_int",
     "as_int",
-    "str_is_float",
+    "is_float",
     "as_float",
     "sed",
     "system",
@@ -976,4 +986,10 @@ __all__ = [
     "time",
     "file_extension",
     "has_extension",
+    "basename",
+    "dirname",
+    "abspath",
+    "stat",
+    'andgrep',
+    'orgrep',
 ]
