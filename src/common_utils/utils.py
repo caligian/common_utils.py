@@ -26,12 +26,15 @@ from json import (
 )
 from functools import reduce as reduce_
 from pyfzf import FzfPrompt
+from sspipe import p as _p, px as _px
 # from .input import menu
 
 Pattern = re.Pattern
 Container = list | tuple | dict
 Sequence = list | tuple
 
+p = _p
+px = _px
 deepcopy = copy.deepcopy
 shallowcopy = copy.copy
 isa = isinstance
@@ -116,40 +119,20 @@ def strptime(
     fmt: str,
     date_str: str,
     *args,
-    use_date: bool = False,
-    use_datetime: bool = True,
-    use_time: bool = False,
+    use: date | datetime | time = datetime,
     **kwargs,
 ) -> str:
-    cls = None
-    if use_date:
-        cls = datetime.date
-    elif use_datetime:
-        cls = datetime.datetime
-    elif use_time:
-        cls = datetime.time
-
-    fn = cls.strptime
+    fn = use.strptime
     return fn(date_str, fmt)
 
 
 def strftime(
     fmt: str,
     *args,
-    use_date: bool = False,
-    use_datetime: bool = True,
-    use_time: bool = False,
+    use: date | datetime | time = datetime,
     **kwargs,
 ) -> str:
-    cls = None
-    if use_date:
-        cls = datetime.date
-    elif use_datetime:
-        cls = datetime.datetime
-    elif use_time:
-        cls = datetime.time
-
-    return cls(*args, **kwargs).strftime(fmt)
+    return use(*args, **kwargs).strftime(fmt)
 
 
 def read_json(filename: str) -> any:
@@ -226,7 +209,7 @@ def foreach(
     exclude: Callable[[int | str], any] = lambda _, __: False,
     stop_when: Callable[[int, str], bool] = lambda _, __: False,
 ) -> Container:
-    if type(tbl) is dict:
+    if isa(tbl, dict):
         res = {}
         for k, v in tbl.items():
             if keep(k, v) and not exclude(k, v) and not stop_when(k, v):
@@ -234,9 +217,13 @@ def foreach(
 
         return res
 
-    return type(tbl)(
-        apply(i, x) for i, x in enumerate(tbl) if keep(i, x) and not exclude(i, x)
-    )
+    res = []
+    for k, v in enumerate(tbl):
+        print((k, v, exclude(k, v)))
+        if keep(k, v) and not exclude(k, v) and not stop_when(k, v):
+            res.append(apply(k, v))
+
+    return type(tbl)(res)
 
 
 def keep(tbl: Container, f: Callable[[int | str, any], any]) -> Container:
@@ -253,6 +240,20 @@ def tbl_keep(tbl: Container, f: Callable[[int | str, any], any]) -> Container:
 
 def tbl_exclude(tbl: Container, f: Callable[[int | str, any], any]) -> Container:
     return foreach(tbl, exclude=f)
+
+
+def is_error(x: any) -> bool:
+    if type(x) is type:
+        if endswith(x.__name__, "Error"):
+            return True
+        elif grep(x.__name__, "Exception"):
+            return True
+        else:
+            return False
+    elif isa(x, BaseException):
+        return True
+    else:
+        return False
 
 
 def tbl_get(
@@ -402,36 +403,51 @@ def sed(
 def system(
     cmd: list[str] | str,
     capture: bool = True,
-    split_nl: bool = False,
+    splitlines: bool = False,
     pcall: bool = True,
     chomp: bool = True,
+    no_stdout: bool = False,
+    no_stderr: bool = False,
     **kwargs,
-) -> list[str] | str | Exception | subprocess.CompletedProcess:
+) -> (
+    subprocess.CompletedProcess
+    | subprocess.CalledProcessError
+    | FileNotFoundError
+    | tuple[str, str]
+    | tuple[list[str], list[str]]
+    | bool
+):
+    kwargs = kwargs.copy()
+    kwargs["check"] = True
+    kwargs["capture_output"] = capture
+
     if type(cmd) is str:
         kwargs["shell"] = True
 
-    def run_and_capture() -> list[str] | str:
-        out = subprocess.check_output(cmd, **kwargs)
-        out = out.decode()
-        out = chomp and strip(out) or out
-        out = split_nl and out.split("\n") or out
+    if no_stdout:
+        kwargs["stdout"] = subprocess.DEVNULL
 
-        return out
+    if no_stderr:
+        kwargs["stderr"] = subprocess.DEVNULL
 
-    if pcall and capture:
-        try:
-            return run_and_capture()
-        except subprocess.CalledProcessError as error:
+    try:
+        proc = subprocess.run(cmd, **kwargs)
+        if capture:
+            stdout = proc.stdout.decode()
+            stderr = proc.stderr.decode()
+            stdout = strip(stdout, lhs=False) if chomp else stdout
+            stderr = strip(stderr, lhs=False) if chomp else stderr
+            stdout = splitlines and stdout.split("\n") or stdout
+            stderr = splitlines and stderr.split("\n") or stderr
+
+            return (stdout, stderr)
+        else:
+            return True
+    except subprocess.CalledProcessError as error:
+        if pcall:
             return error
-    elif capture:
-        return run_and_capture()
-    elif pcall:
-        try:
-            return subprocess.run(cmd, **kwargs)
-        except subprocess.CalledProcessError as error:
-            return error
-    else:
-        return subprocess.run(cmd, **kwargs)
+        else:
+            raise error
 
 
 def systemlist(
@@ -704,12 +720,16 @@ def unwrap(xs: Sequence) -> any:
 def push(xs: Sequence, *elements: any, index: int | None = None) -> Sequence:
     cls = type(xs)
     xs = list(xs)
+    xs_len = len(xs)
+    index = xs_len - 1 if index is None else index
+    index = xs_len + index if index < 0 else index
 
-    for e in elements:
-        if not index:
+    if index == xs_len - 1:
+        for e in elements:
             xs.append(e)
-        else:
-            xs.append(e)
+    else:
+        for e in elements[::-1]:
+            xs.insert(index, e)
 
     return cls(xs)
 
@@ -719,18 +739,28 @@ def reverse(xs: tuple | list | str) -> tuple | list | str:
 
 
 def unpush(xs: Sequence, *elements: any) -> Sequence:
-    return push(xs, *elements[::-1], index=0)
+    return push(xs, *elements, index=0)
 
 
-def extend(xs: Sequence, *elements: any) -> Sequence:
+def extend(xs: Sequence, *elements: any, index: int | None = None) -> Sequence:
     cls = type(xs)
     xs = list(xs)
+    xs_len = len(xs)
+    index = xs_len - 1 if index is None else index
+    index = xs_len + index if index < 0 else index
 
-    for e in elements:
-        if sequence(e):
-            xs.extend(list(e))
-        else:
-            xs.append(e)
+    if index == xs_len - 1:
+        for e in elements:
+            if sequence(e):
+                xs.extend(list(e))
+            else:
+                xs.append(e)
+    else:
+        for e in elements[::-1]:
+            if sequence(e):
+                xs = push(xs, *e, index=index)
+            else:
+                xs.insert(index, e)
 
     return cls(xs)
 
@@ -741,7 +771,7 @@ def lextend(xs: list, *elements: any) -> Sequence:
 
     for e in elements[::-1]:
         if sequence(e):
-            unpush(xs, e)
+            xs = unpush(xs, *e)
         else:
             xs.insert(0, e)
 
@@ -990,6 +1020,9 @@ __all__ = [
     "dirname",
     "abspath",
     "stat",
-    'andgrep',
-    'orgrep',
+    "andgrep",
+    "orgrep",
+    "p",
+    "px",
+    "is_error",
 ]

@@ -34,21 +34,78 @@ ALIASES: dict[str, str] = {
     "h": "help",
     "c": "clear",
     "p": "print",
+    "filter": "filter",
+    "select": "select",
+    "quit": "quit",
+    "help": "help",
+    "clear": "clear",
+    "print": "print",
 }
+HELP = """Valid commands:
+    filter | f <regex>
+    Filter using this regular expression
+
+    select | s <regex>
+    Select all items that match this regex
+
+    select | s <index1> [index2] ...
+    Select these options specified by index separated by whitespace
+
+    clear  | c
+    clear current filter
+
+    print  | p
+    Print selections
+
+    help   | h
+    Show this help
+
+    quit   | q
+    Quit menu and return None"""
+
 invalid_command_message = "Invalid valid command provided: {cmd}\nValid commands are filter [f, /], select [s], help [h], print [p], quit [q], clear [c]\nInput `help` | `h` to display valid commands"
 no_argument_message = "No argument provided for command: {cmd}"
 void_command_message = "No arguments are required for this command: {cmd}"
 invalid_index_message = "Invalid index provided: {index}"
+no_choices_matched = "No choices matched with `{pattern}`"
 
 
-def default_menu_formatter(key: str | int, value: any, key_width: int = 100) -> str:
+def no_matched_choices(pattern: str | re.Pattern) -> tuple[bool, str]:
+    return (False, no_choices_matched.format(pattern=pattern))
+
+
+def invalid_command(cmd: str) -> tuple[bool, str]:
+    return (False, invalid_command_message.format(cmd=cmd))
+
+
+def no_argument(cmd: str) -> tuple[bool, str]:
+    return (False, no_argument_message.format(cmd=cmd))
+
+
+def void_command(cmd: str) -> tuple[bool, str]:
+    return (False, void_command_message.format(cmd=cmd))
+
+
+def invalid_index(index: str) -> tuple[bool, str]:
+    return (False, invalid_index_message.format(index=index))
+
+
+def mkmessage(msg: str, cmd: str) -> tuple[bool, str]:
+    return (False, msg.format(cmd=cmd))
+
+
+def default_menu_formatter(
+    key: str | int,
+    value: any,
+    key_width: int = 100,
+) -> str:
     key = str(key)
     value = str(value)
 
     return f"{key:<{key_width}} | {value}"
 
 
-def calc_max_key_width(xs: list[str]):
+def max_key_width(xs: list[str]):
     keys = list(range(0, len(xs)))
     keys = map(str, keys)
     keys = map(len, keys)
@@ -74,12 +131,14 @@ def valid_command(cmd: str) -> tuple[bool, str | None]:
     if cmd in COMMANDS_WITH_ALIASES:
         return (True, None)
     else:
-        return (False, invalid_command_message.format(cmd=cmd))
+        return invalid_command(cmd)
 
 
 def valid_nargs(cmd: str, args: str | None = None) -> tuple[bool, str]:
     if cmd not in ALIASES:
-        return (False, invalid_command_message.format(cmd=cmd))
+        return invalid_command(cmd)
+    else:
+        cmd = ALIASES[cmd]
 
     args = "" if args is None else args
     args = args.lstrip().rstrip()
@@ -90,150 +149,189 @@ def valid_nargs(cmd: str, args: str | None = None) -> tuple[bool, str]:
             match cmd:
                 case x if x in ("filter", "select"):
                     if is_blank:
-                        (False, no_argument_message.format(cmd=cmd))
+                        return no_argument(cmd)
                     else:
-                        return (True, None)
+                        return (True, cmd)
                 case _ if not is_blank:
-                    return (False, void_command_message.format(cmd=cmd))
+                    return void_command(cmd)
+                case _:
+                    return (True, cmd)
 
         case (False, msg):
             return (False, msg)
 
 
-def parse_select_args(args: str) -> str | list[int]:
-    _args = args
-    args = args.lstrip().rstrip()
-    args = args.split(" ")
-    args = [x.lstrip().rstrip() for x in args]
-    is_pattern = False not in [re.search(r"^[0-9]+$", x) is not None for x in args]
-
-    if is_pattern:
-        return args
-    else:
-        return list(map(int, args))
-
-
-def select_options(
-    options: list[str], index: list[int]
-) -> tuple[bool, list[str] | str]:
-    options_len = len(options)
-    res = []
-
-    for a in index:
-        a = a + options_len if a < 0 else a
-        if a < 0 or a > options_len:
-            return (False, invalid_index_message.format(index=str(a)))
+def parse_select(items: list[str], choices: str) -> tuple[bool, list[str] | str]:
+    def parse_choice(items: list[str], choice: str) -> tuple[bool, list[int] | str]:
+        s = choice
+        if m := re.search(r"^([0-9]+)-([0-9]+)$", s):
+            start, end = int(m.group(1)), int(m.group(2))
+            return (True, list(range(start, end + 1)))
+        elif m := re.search(r"^\^([0-9]+)-([0-9]+)$", s):
+            start, end = m.group(1), m.group(2)
+            start, end = int(start), int(end)
+            ignore = list(range(start, end + 1))
+            return (True, [x for x in range(1, len(items) + 1) if x not in ignore])
+        elif m := re.search(r"^([0-9]+)$", s):
+            return (True, [int(m.group(1))])
         else:
-            res.append(options[a])
+            return invalid_index(choice)
 
-    return res
+    def parse_choices(
+        items: list[str], choices: list[str] | str
+    ) -> tuple[bool, list[int] | str]:
+        choices = [choices] if not isinstance(choices, (list, tuple)) else choices
+        res: list[int] = []
+        items_len = len(items)
+
+        for choice in choices:
+            result = parse_choice(items, choice)
+            match result:
+                case (False, msg):
+                    return (False, msg)
+                case (True, index):
+                    for ind in index:
+                        if ind < 1 or ind > items_len:
+                            return invalid_index(ind)
+                        else:
+                            res.append(ind - 1)
+                case _:
+                    raise NotImplementedError
+
+        return (True, res)
+
+    choices = re.split(r"\s+", choices)
+    choices = [x.strip() for x in choices]
+    choices = [x for x in choices if len(x) > 0]
+
+    if len(choices) == 0:
+        return no_argument("select")
+
+    match parse_choices(items, choices):
+        case (True, indices):
+            return (True, [items[x] for x in indices])
+        case (False, msg):
+            return (False, msg)
+
+
+def parse_filter(
+    items: list[str],
+    pattern: str | re.Pattern,
+) -> tuple[bool, list[str] | str]:
+    res = [x for x in items if re.search(pattern, x, flags=re.I + re.M)]
+    ok = len(res) > 0
+
+    if not ok:
+        return no_matched_choices(pattern)
+    else:
+        return (True, res)
+
+
+def print_items(items: list[str], key_width: int | None = None) -> None:
+    key_width = max_key_width(items) if not key_width else key_width
+    for i, x in enumerate(items):
+        cprint(f"{i + 1:<{key_width}} |", color="yellow", end=" ")
+        cprint(str(x), color="yellow")
+
+
+def parse_input(
+    items: list[str],
+    input: str,
+) -> tuple[bool, tuple[str, list[str]] | str]:
+    input = input.lstrip().rstrip()
+    input = input.split(" ", maxsplit=1)
+    input[0] = input[0].lstrip().rstrip()
+    res = valid_nargs(*input)
+
+    match res:
+        case (True, cmd):
+            match cmd:
+                case "select":
+                    match parse_select(items, input[1]):
+                        case (True, xs):
+                            return (True, ("select", xs))
+                        case (False, msg):
+                            return (False, msg)
+                case "filter":
+                    match parse_filter(items, input[1]):
+                        case (True, items):
+                            return (True, ("filter", items))
+                        case (False, msg):
+                            return (False, msg)
+                case "help":
+                    return (True, ("help", HELP))
+                case "clear":
+                    return (True, ("clear", None))
+                case "quit":
+                    return (True, ("quit", None))
+                case "print":
+                    print_items(items)
+                    return (True, ("print", None))
+                case _:
+                    raise NotImplementedError(cmd)
+        case (False, msg):
+            return (False, msg)
 
 
 def menu(
-    xs: Options,
-    formatter: Formatter = default_menu_formatter,
-    sep: str = r"\n",
-    f: Callable[[str | list[str]], any] = lambda x: x,
-    prompt: str = ">",
-) -> any:
-    menu_help = """Valid commands:
-        filter | f <regex>
-        Filter using this regular expression
+    items: list[str],
+    formatter: Callable[[int, str], str] = lambda i, x: x,
+    history: list[list[str]] | None = None,
+    depth: int = 1,
+    first: bool = True,
+) -> list[str]:
+    key_width = max_key_width(items)
+    if first:
+        print_items(items, key_width=key_width)
 
-        select | s <regex>
-        Select all items that match this regex
+    if not history or len(history) == 0:
+        history = [items]
 
-        select | s <index1> [index2] ...
-        Select these options specified by index separated by whitespace
+    if depth < 0:
+        depth = 1
+        
+    try:
+        inp = input("% ")
+        inp = inp.lstrip().rstrip()
 
-        clear  | c
-        clear current filter
+        if len(inp) == 0:
+            cprint("No input provided", "red")
+            return menu(items, formatter, history, depth, False)
 
-        print  | p
-        Print selections
-
-        help   | h
-        Show this help
-
-        quit   | q
-        Quit menu and return None"""
-    command_aliases: dict[str, str] = {
-        "f": "filter",
-        "s": "select",
-        "c": "clear",
-        "q": "quit",
-        "h": "help",
-        "filter": "filter",
-        "select": "select",
-        "clear": "clear",
-        "quit": "quit",
-        "help": "help",
-    }
-
-    def format_options(options: list[str]) -> str:
-        pass
-
-    def press_enter():
-        cprint("Press enter to continue", "blue")
-        input()
-        return
-
-    def get_options(pattern: str | list[int], options: list[str]) -> list[str]:
-        pass
-
-    def parse(
-        s: str,
-        multiple: bool = False,
-        sep: bool = r"\s+",
-        options: list[str] = [],
-    ) -> tuple[str, str | list[str]] | None:
-        s = re.split(sep, s, maxsplit=1)
-        if len(s) == 0:
-            cprint("No command provided", "red")
-            press_enter()
-            return
-
-        cmd = s[0]
-
-        if cmd not in command_aliases:
-            cprint(
-                "red",
-            )
-            press_enter()
-            return
-
-        cmd = command_aliases[cmd]
-        if cmd in ("filter", "select") and len(s) == 1:
-            cprint(f"No arguments provided for command {cmd}", "red")
-            press_enter()
-        elif cmd == "help":
-            cprint(menu_help, "white")
-            press_enter()
-            return
-
-        args = s[1]
-        if grep(args, "^[0-9 ]+$"):
-            args = re.split(r"\s+", args)
-            args = filter(is_int, args)
-            args = map(parse_int, args)
-            limit = len(options)
-            failed = False
-
-            for index in args:
-                if index < 1 or index > limit:
-                    cprint(f"Invalid index provided: {index}", "red")
-                    failed = True
-
-            if failed:
-                cprint("Cannot proceed with incorrect indices of options", "red")
-                press_enter()
+        user_input = parse_input(items, inp) 
+        match user_input:
+            case (False, msg):
+                cprint(msg, "red")
+                return menu(items, formatter, history, depth, False)
+            case (True, ("select", items)):
+                return items
+            case (True, ("filter", items)):
+                history.append(items)
+                return menu(items, formatter, history, depth + 1, True)
+            case (True, ("help", help_str)):
+                cprint(help_str, "green")
+                return menu(items, formatter, history, depth, False)
+            case (True, ("print", _)):
+                return menu(items, formatter, history, depth, False)
+            case (True, ("clear", _)):
+                history.pop()
+                return menu(history[-1], formatter, history, depth - 1, True)
+            case (True, ("quit", _)):
                 return
-            else:
-                return
+            case _:
+                raise NotImplementedError
+    except KeyboardInterrupt as error:
+        cprint(str(error), "red")
+        return menu(items, formatter, history, depth, False)
+    except EOFError:
+        cprint("Quit (y/n) ? ", "red", end="")
+        inp = input()
+        inp = inp.lstrip().rstrip()
+
+        if "y" in inp:
+            return
         else:
-            pass
+            return menu(items, formatter, history, depth, False)
 
 
-__all__ = [
-    "menu",
-]
+__all__ = ['all']
