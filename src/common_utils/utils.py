@@ -27,12 +27,13 @@ from json import (
 from functools import reduce as reduce_
 from pyfzf import FzfPrompt
 from sspipe import p as _p, px as _px
-# from .input import menu
+from src.common_utils.input import menu as _menu
 
 Pattern = re.Pattern
 Container = list | tuple | dict
 Sequence = list | tuple
 
+menu = _menu
 p = _p
 px = _px
 deepcopy = copy.deepcopy
@@ -1025,4 +1026,5 @@ __all__ = [
     "p",
     "px",
     "is_error",
+    "menu",
 ]
