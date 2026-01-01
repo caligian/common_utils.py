@@ -28,10 +28,12 @@ from functools import reduce as reduce_
 from pyfzf import FzfPrompt
 from sspipe import p as _p, px as _px
 from src.common_utils.input import menu as _menu
+from src.common_utils.result import Result as _result
 
 Pattern = re.Pattern
 Container = list | tuple | dict
 Sequence = list | tuple
+Result = _result
 
 menu = _menu
 p = _p
@@ -61,6 +63,16 @@ basename = os.path.basename
 dirname = os.path.dirname
 abspath = os.path.abspath
 stat = os.stat
+cpstat = shutil.copystat
+
+
+def cp(src: str, dest: str, **kwargs) -> str:
+    if os.path.isdir(src):
+        shutil.copytree(src, dest, **kwargs)
+    else:
+        shutil.copy(src, dest, **kwargs)
+
+    return dest
 
 
 def file_extension(filename: str) -> str:
@@ -120,7 +132,7 @@ def strptime(
     fmt: str,
     date_str: str,
     *args,
-    use: date | datetime | time = datetime,
+    use: type = datetime,
     **kwargs,
 ) -> str:
     fn = use.strptime
@@ -130,7 +142,7 @@ def strptime(
 def strftime(
     fmt: str,
     *args,
-    use: date | datetime | time = datetime,
+    use: type = datetime,
     **kwargs,
 ) -> str:
     return use(*args, **kwargs).strftime(fmt)
@@ -191,16 +203,23 @@ def seq_along(xs: Container) -> list[int]:
         return list(xs.keys())
 
 
-def failure(*s: str, color: str = "red", **kwargs) -> None:
-    cprint(*s, color=color, **kwargs)
-
-
 def message(*s: str, color: str = "blue", **kwargs) -> None:
     cprint(*s, color=color, **kwargs)
 
 
-def success(*s: str, color: str = "green", **kwargs) -> None:
+def msg_failure(*s: str, color: str = "red", **kwargs) -> None:
     cprint(*s, color=color, **kwargs)
+
+
+def msg_success(*s: str, color: str = "green", **kwargs) -> None:
+    cprint(*s, color=color, **kwargs)
+
+
+def msg_warn(*s: str, color: str = "yellow", **kwargs) -> None:
+    cprint(*s, color=color, **kwargs)
+
+
+msg_ok = msg_success
 
 
 def foreach(
@@ -220,7 +239,6 @@ def foreach(
 
     res = []
     for k, v in enumerate(tbl):
-        print((k, v, exclude(k, v)))
         if keep(k, v) and not exclude(k, v) and not stop_when(k, v):
             res.append(apply(k, v))
 
@@ -926,84 +944,43 @@ def orgrep(s: str, *pattern: str | re.Pattern, flags=re.I) -> str | re.Pattern |
 
 
 __all__ = [
+    # misc stuff
     "ARGV",
+    "ifelse",
+    "unless",
+    "ifNone",
+    "unlessNone",
+    "pcall",
+    "has_argv",
+    "isa",
+    "p",
+    "px",
+    "identity",
+    "partial",
+    "is_error",
+    "blank",
+    "not_blank",
+    "deepcopy",
+    "shallowcopy",
+    "Result",
+
+    #
+    # file operations
     "rm",
-    "strptime",
-    "strftime",
+    "cp",
+    "cpstat",
+    "slurp",
+    "spit",
     "read_json",
     "write_json",
     "read_pkl",
     "write_pkl",
     "read_csv",
     "write_csv",
-    "seq_along",
-    "failure",
-    "message",
-    "success",
-    "foreach",
-    "keep",
-    "tbl_apply",
-    "tbl_keep",
-    "tbl_exclude",
-    "tbl_get",
-    "tbl_set",
-    "tbl_has",
-    "split",
-    "splitlines",
-    "grep",
-    "tbl_grep",
-    "tbl_grepv",
-    "startswith",
-    "endswith",
-    "is_int",
-    "as_int",
-    "is_float",
-    "as_float",
-    "sed",
-    "system",
-    "systemlist",
-    "strip",
-    "lstrip",
-    "rstrip",
-    "slurp",
-    "spit",
-    "sequence",
-    "container",
-    "flatten",
-    "assoc",
-    "as_list",
-    "ifelse",
-    "unless",
-    "ifNone",
-    "unlessNone",
-    "pcall",
-    "whereis",
-    "ls",
-    "unwrap",
-    "push",
-    "reverse",
-    "unpush",
-    "extend",
-    "lextend",
-    "identity",
-    "pop",
-    "shift",
-    "popn",
-    "shiftn",
-    "fzf",
-    "blank",
-    "not_blank",
-    "has_argv",
-    "deepcopy",
-    "shallowcopy",
-    "isa",
     "load_pkl",
     "dump_pkl",
     "load_json",
     "dump_json",
-    "partial",
-    "namedtuple",
-    "reduce",
     "mkdir",
     "is_dir",
     "is_file",
@@ -1012,19 +989,80 @@ __all__ = [
     "is_junction",
     "path_exists",
     "rmtree",
-    "date",
-    "datetime",
-    "time",
     "file_extension",
     "has_extension",
     "basename",
     "dirname",
     "abspath",
     "stat",
+    "whereis",
+    "ls",
+    #
+    # colored print
+    "message",
+    "msg_failure",
+    "msg_success",
+    "msg_ok",
+    #
+    # date and time stuff
+    "strptime",
+    "strftime",
+    "date",
+    "datetime",
+    "time",
+    #
+    # string utils
+    "grep",
+    "startswith",
+    "endswith",
+    "split",
+    "splitlines",
+    "is_int",
+    "as_int",
+    "is_float",
+    "as_float",
+    "sed",
+    "strip",
+    "lstrip",
+    "rstrip",
     "andgrep",
     "orgrep",
-    "p",
-    "px",
-    "is_error",
+    #
+    # shell calls
+    "system",
+    "systemlist",
+    #
+    # container stuff
+    "seq_along",
+    "foreach",
+    "keep",
+    "sequence",
+    "tbl_apply",
+    "tbl_keep",
+    "tbl_exclude",
+    "tbl_get",
+    "tbl_set",
+    "tbl_has",
+    "tbl_grep",
+    "tbl_grepv",
+    "container",
+    "flatten",
+    "assoc",
+    "as_list",
+    "unwrap",
+    "push",
+    "reverse",
+    "unpush",
+    "extend",
+    "lextend",
+    "pop",
+    "shift",
+    "popn",
+    "shiftn",
+    "namedtuple",
+    "reduce",
+    #
+    # menu
+    "fzf",
     "menu",
 ]

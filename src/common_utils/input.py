@@ -2,6 +2,7 @@ import re
 
 from termcolor import cprint
 from typing import Callable
+from pyfzf import FzfPrompt
 
 COMMANDS: dict[str, dict[str, list[str] | int]] = {
     "filter": dict(aliases=["f", "/"], nargs=1),
@@ -10,8 +11,12 @@ COMMANDS: dict[str, dict[str, list[str] | int]] = {
     "print": dict(aliases=["p"], nargs=0),
     "quit": dict(aliases=["q"], nargs=0),
     "clear": dict(aliases=["c"], nargs=0),
+    "fzf": dict(aliases=["z"], nargs=0),
 }
+
 COMMANDS_WITH_ALIASES: list[str] = [
+    "fzf",
+    "z",
     "filter",
     "f",
     "/",
@@ -25,8 +30,10 @@ COMMANDS_WITH_ALIASES: list[str] = [
     "q",
     "clear",
     "c",
+    "",
 ]
 ALIASES: dict[str, str] = {
+    "z": "fzf",
     "f": "filter",
     "/": "filter",
     "s": "select",
@@ -34,6 +41,7 @@ ALIASES: dict[str, str] = {
     "h": "help",
     "c": "clear",
     "p": "print",
+    "fzf": "fzf",
     "filter": "filter",
     "select": "select",
     "quit": "quit",
@@ -45,11 +53,11 @@ HELP = """Valid commands:
     filter | f <regex>
     Filter using this regular expression
 
-    select | s <regex>
-    Select all items that match this regex
-
     select | s <index1> [index2] ...
-    Select these options specified by index separated by whitespace
+    Select these options specified by index separated by whitespace and return choices
+
+    fzf    | z
+    Select items using fzf and return choices
 
     clear  | c
     clear current filter
@@ -63,7 +71,7 @@ HELP = """Valid commands:
     quit   | q
     Quit menu and return None"""
 
-invalid_command_message = "Invalid valid command provided: {cmd}\nValid commands are filter [f, /], select [s], help [h], print [p], quit [q], clear [c]\nInput `help` | `h` to display valid commands"
+invalid_command_message = "Invalid valid command provided: {cmd}\nValid commands are filter [f, /], select [s], help [h], print [p], quit [q], fzf [z], clear [c]\nInput `help` | `h` to display valid commands"
 no_argument_message = "No argument provided for command: {cmd}"
 void_command_message = "No arguments are required for this command: {cmd}"
 invalid_index_message = "Invalid index provided: {index}"
@@ -234,6 +242,16 @@ def print_items(items: list[str], key_width: int | None = None) -> None:
         cprint(str(x), color="yellow")
 
 
+def parse_fzf(items: list[str]) -> tuple[bool, list[str]]:
+    prompt = FzfPrompt().prompt
+    selected = prompt(items, "--multi")
+
+    if len(selected) == 0:
+        return (False, "No choices made")
+    else:
+        return (True, selected)
+
+
 def parse_input(
     items: list[str],
     input: str,
@@ -267,15 +285,20 @@ def parse_input(
                 case "print":
                     print_items(items)
                     return (True, ("print", None))
-                case _:
-                    raise NotImplementedError(cmd)
+                case "fzf":
+                    match parse_fzf(items):
+                        case (True, items):
+                            return (True, ("fzf", items))
+                        case (False, msg):
+                            return (False, msg)
+                case cmd:
+                    return invalid_command(cmd)
         case (False, msg):
             return (False, msg)
 
 
 def menu(
     items: list[str],
-    formatter: Callable[[int, str], str] = lambda i, x: x,
     history: list[list[str]] | None = None,
     depth: int = 1,
     first: bool = True,
@@ -289,40 +312,42 @@ def menu(
 
     if depth < 0:
         depth = 1
-        
+
     try:
         inp = input("% ")
         inp = inp.lstrip().rstrip()
 
         if len(inp) == 0:
             cprint("No input provided", "red")
-            return menu(items, formatter, history, depth, False)
+            return menu(items, history, depth, False)
 
-        user_input = parse_input(items, inp) 
+        user_input = parse_input(items, inp)
         match user_input:
             case (False, msg):
                 cprint(msg, "red")
-                return menu(items, formatter, history, depth, False)
+                return menu(items, history, depth, False)
             case (True, ("select", items)):
                 return items
             case (True, ("filter", items)):
                 history.append(items)
-                return menu(items, formatter, history, depth + 1, True)
+                return menu(items, history, depth + 1, True)
             case (True, ("help", help_str)):
                 cprint(help_str, "green")
-                return menu(items, formatter, history, depth, False)
+                return menu(items, history, depth, False)
             case (True, ("print", _)):
-                return menu(items, formatter, history, depth, False)
+                return menu(items, history, depth, False)
             case (True, ("clear", _)):
                 history.pop()
-                return menu(history[-1], formatter, history, depth - 1, True)
+                return menu(history[-1], history, depth - 1, True)
             case (True, ("quit", _)):
                 return
+            case (True, ("fzf", choices)):
+                return choices
             case _:
                 raise NotImplementedError
     except KeyboardInterrupt as error:
         cprint(str(error), "red")
-        return menu(items, formatter, history, depth, False)
+        return menu(items, history, depth, False)
     except EOFError:
         cprint("Quit (y/n) ? ", "red", end="")
         inp = input()
@@ -331,7 +356,7 @@ def menu(
         if "y" in inp:
             return
         else:
-            return menu(items, formatter, history, depth, False)
+            return menu(items, history, depth, False)
 
 
-__all__ = ['all']
+__all__ = ["all"]
