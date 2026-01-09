@@ -401,7 +401,7 @@ class Menu:
             cprint("Pass 'help' to display help", "blue")
             return self.input()
         elif len(cmd) == 1:
-            return Result(True, (self.command_aliases[cmd[0]], []))
+            return Result(True, (self.command_aliases[cmd[0]], ''))
         else:
             return Result(True, (self.command_aliases[cmd[0]], cmd[1]))
 
@@ -429,7 +429,6 @@ class Menu:
             return
 
         cmd: MenuCommand
-        args = args if type(args) is str else ""
         parsed = cmd.parse(args)
 
         if parsed.is_error():
