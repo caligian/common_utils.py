@@ -240,7 +240,7 @@ class Menu:
         )
         self.on(
             "select",
-            "Select items by index. Prefix index with `^` in order to exclude that range of index.\nExample:\n\t^1-9 (exclude everything from 1 till (including) 9)\n\t1-9 Select index from 1 till (including) 9\n\t1 Select the first item",
+            "Select items by index.\nPrefix index with `^` in order to exclude that index or range of index. Ranges are considered to be end-inclusive\nExample:\n\t^1-9: Exclude indices from 1 till 10\n\t1-9: Select indices from 1 till 10\n\t1 Select the first item\n\t^2: Exclude the second item",
             aliases=["s"],
             cond=lambda s: re.search(r"^[0-9\^ ]+$", s) and re.search("[0-9]", s),
             process=lambda s: list(map(lambda x: x.lstrip().rstrip(), s)),
