@@ -5,6 +5,7 @@ import datetime
 import sys
 import shutil
 import copy
+import collections
 
 from pickle import (
     load as pkl_load,
@@ -27,7 +28,7 @@ from json import (
 from functools import reduce as reduce_
 from pyfzf import FzfPrompt
 from sspipe import p as _p, px as _px
-from src.common_utils.input import menu as _menu
+from src.common_utils.input import Menu as _menu
 from src.common_utils.result import Result as _result
 
 Pattern = re.Pattern
@@ -40,7 +41,6 @@ p = _p
 px = _px
 deepcopy = copy.deepcopy
 shallowcopy = copy.copy
-isa = isinstance
 load_pkl = _load_pkl
 dump_pkl = _dump_pkl
 load_json = _load_json
@@ -66,6 +66,10 @@ stat = os.stat
 cpstat = shutil.copystat
 
 
+def isa(x, *types: type) -> bool:
+    return isinstance(x, tuple(types))
+
+
 def cp(src: str, dest: str, **kwargs) -> str:
     if os.path.isdir(src):
         shutil.copytree(src, dest, **kwargs)
@@ -89,7 +93,7 @@ def has_extension(filename: str, *pattern: str | re.Pattern) -> bool:
 
 
 def mime_type(filename: str) -> str | None:
-    out = subprocess.check_output(["file", filename])
+    out = subprocess.check_output(["file", "--mime-encoding", filename])
     out = out.decode()
     out = out.split(":")
     out = out[-1]
@@ -197,7 +201,7 @@ def write_csv(
 
 
 def seq_along(xs: Container) -> list[int]:
-    if isa(xs, (list, tuple)):
+    if isa(xs, list, tuple):
         return list(range(len(xs)))
     else:
         return list(xs.keys())
@@ -224,53 +228,98 @@ msg_ok = msg_success
 
 def foreach(
     tbl: Container,
-    apply: Callable[[int | str, any], any] = lambda _, x: x,
-    keep: Callable[[int | str, any], any] = lambda _, __: True,
-    exclude: Callable[[int | str], any] = lambda _, __: False,
-    stop_when: Callable[[int, str], bool] = lambda _, __: False,
+    apply: Callable[[int | str, any], any] | Callable[[any], any] | None = None,
+    keep: Callable[[int | str, any], any] | Callable[[any], any] | None = None,
+    exclude: Callable[[int | str], any] | Callable[[any], any] | None = None,
+    stop_when: Callable[[int, str], bool] | Callable[[any], any] | None = None,
+    index: bool = False,
 ) -> Container:
-    if isa(tbl, dict):
-        res = {}
-        for k, v in tbl.items():
+    if index:
+        if apply:
+
+            def apply(_, x):
+                x
+
+        if keep:
+
+            def keep(_, x):
+                x
+
+        if exclude:
+
+            def exclude(_, x):
+                x
+
+        if stop_when:
+
+            def stop_when(_, x):
+                x
+
+    res = {}
+    it = None
+
+    if index:
+        if sequence(tbl):
+            it = enumerate(tbl)
+        else:
+            it = tbl.items()
+    elif sequence(tbl):
+        it = tbl
+    else:
+        it = tbl.values()
+
+    if index:
+        for k, v in it:
             if keep(k, v) and not exclude(k, v) and not stop_when(k, v):
-                res[k] = apply(k, v)
-
-        return res
-
-    res = []
-    for k, v in enumerate(tbl):
-        if keep(k, v) and not exclude(k, v) and not stop_when(k, v):
-            res.append(apply(k, v))
+                res.append(apply(k, v))
+    else:
+        for x in it:
+            if keep(x) and not exclude(x) and not stop_when(x):
+                res.append(apply(x))
 
     return type(tbl)(res)
 
 
-def keep(tbl: Container, f: Callable[[int | str, any], any]) -> Container:
+def keep(
+    tbl: Container,
+    f: Callable[[int | str, any], any] | Callable[[any], any],
+) -> Container:
     return foreach(tbl, keep=f)
 
 
-def tbl_apply(tbl: Container, f: Callable[[int | str, any], any]) -> Container:
+def tbl_apply(
+    tbl: Container,
+    f: Callable[[int | str, any], any] | Callable[[any], any],
+) -> Container:
     return foreach(tbl, apply=f)
 
 
-def tbl_keep(tbl: Container, f: Callable[[int | str, any], any]) -> Container:
+def tbl_keep(
+    tbl: Container,
+    f: Callable[[int | str, any], any] | Callable[[any], any],
+) -> Container:
     return foreach(tbl, keep=f)
 
 
-def tbl_exclude(tbl: Container, f: Callable[[int | str, any], any]) -> Container:
+def tbl_exclude(
+    tbl: Container,
+    f: Callable[[int | str, any], any] | Callable[[any], any],
+) -> Container:
     return foreach(tbl, exclude=f)
 
 
 def is_error(x: any) -> bool:
-    if type(x) is type:
+    if isa(x, BaseException):
+        return True
+    elif isa(x, Exception):
+        return True
+    elif type(x) is type:
         if endswith(x.__name__, "Error"):
             return True
         elif grep(x.__name__, "Exception"):
             return True
         else:
             return False
-    elif isa(x, BaseException):
-        return True
     else:
         return False
 
@@ -284,9 +333,9 @@ def tbl_get(
 
     for k in ks:
         match assoc(xs, k):
-            case (True, x, _):
+            case Result(ok=True, value=x):
                 res.append(x)
-            case (False, error, _):
+            case Result(ok=False, value=error):
                 if not pcall:
                     raise error
                 else:
@@ -295,14 +344,17 @@ def tbl_get(
     return res
 
 
-def tbl_has(xs: Container, *ks: int | str | list[int | str]) -> list[any]:
+def tbl_has(
+    xs: Container,
+    *ks: int | str | list[int | str],
+) -> list[any]:
     res = []
 
     for k in ks:
         match assoc(xs, k):
-            case (True, _, _):
-                res.append(True)
-            case (False, _, _):
+            case Result(ok=True, value=value):
+                res.append(value)
+            case Result(ok=False):
                 res.append(False)
 
     return res
@@ -318,11 +370,13 @@ def tbl_set(
 
     for k, v in keys_and_values:
         match assoc(xs, k, value=v):
-            case (True, _value, _level):
+            case Result(ok=True):
                 continue
-            case (False, error, _level):
+            case Result(ok=False, value=error):
                 if not pcall:
                     raise error
+                else:
+                    return error
 
     return xs
 
@@ -462,7 +516,7 @@ def system(
             return (stdout, stderr)
         else:
             return True
-    except subprocess.CalledProcessError as error:
+    except Exception as error:
         if pcall:
             return error
         else:
@@ -475,7 +529,14 @@ def systemlist(
     chomp: bool = True,
     **kwargs,
 ) -> list[str] | Exception:
-    return system(cmd, capture=True, split_nl=True, chomp=chomp, pcall=pcall, **kwargs)
+    return system(
+        cmd,
+        capture=True,
+        splitlines=True,
+        chomp=chomp,
+        pcall=pcall,
+        **kwargs,
+    )
 
 
 def strip(s: str, lhs: bool = True, rhs: bool = True) -> str:
@@ -555,11 +616,11 @@ def spit(
 
 
 def sequence(xs: list | tuple) -> bool:
-    return isa(xs, (tuple, list))
+    return isa(xs, tuple, list)
 
 
 def container(xs: dict | list | tuple) -> bool:
-    return isa(xs, (tuple, int, dict))
+    return isa(xs, tuple, int, dict)
 
 
 def flatten(xs: list | tuple, maxdepth: int = -1) -> list:
@@ -592,15 +653,15 @@ def assoc(
         try:
             v = v[k]
         except Exception as error:
-            return (False, error, v)
+            return Result(False, error, v)
 
     k = ks[-1]
     try:
         if value is not None:
             v[k] = value
-        return (True, v[k], v)
+        return Result(True, v[k], v)
     except Exception as error:
-        return (False, error, v)
+        return Result(False, error, v)
 
 
 def as_list(xs: any, force: bool = False) -> list:
@@ -612,28 +673,45 @@ def as_list(xs: any, force: bool = False) -> list:
         return [xs]
 
 
-def ifelse(
+def unless(
     value: any,
-    when_truthy: Callable,
-    when_falsy: Callable | None = None,
+    falsy: Callable = lambda x: x,
+    truthy: Callable | None = None,
+    *args,
+    **kwargs,
 ) -> any:
-    if value:
-        return when_truthy(value)
-    elif callable(when_falsy):
-        return when_falsy(value)
+    if not value:
+        return falsy(value, *args, **kwargs)
+    elif truthy:
+        return truthy(value, *args, **kwargs)
     else:
         return value
 
 
-def unless(
+def ifelse(
     value: any,
-    when_falsy: Callable,
-    when_truthy: Callable | None = None,
+    truthy: Callable = lambda x: x,
+    falsy: Callable | None = None,
+    *args,
+    **kwargs,
 ) -> any:
     if value:
-        return when_falsy(value)
-    elif callable(when_truthy):
-        return when_truthy(value)
+        return truthy(value, *args, **kwargs)
+    elif falsy:
+        return falsy(value, *args, **kwargs)
+    else:
+        return value
+
+
+def unlessNone(
+    value: any,
+    when_not_none: Callable,
+    when_none: Callable | None = None,
+) -> any:
+    if value is not None:
+        return when_not_none()
+    elif when_none is not None:
+        return when_none()
     else:
         return value
 
@@ -644,32 +722,19 @@ def ifNone(
     when_not_none: Callable | None = None,
 ) -> any:
     if value is None:
-        return when_none(value)
-    elif callable(when_not_none):
-        return when_not_none(value)
+        return when_none()
+    elif when_not_none is not None:
+        return when_not_none()
     else:
         return value
 
 
-def unlessNone(
-    value: any,
-    when_not_none: Callable | None,
-    when_none: Callable | None = None,
-) -> any:
-    if type(value) is not None:
-        return when_not_none(value)
-    elif callable(when_none):
-        return when_none(value)
-    else:
-        return value
-
-
-def pcall(f, *args, **kwargs) -> tuple[bool, any]:
+def pcall(f, *args, **kwargs) -> Result:
     try:
         output = f(*args, **kwargs)
-        return (True, output)
+        return Result(True, output)
     except Exception as error:
-        return (False, error)
+        return Result(False, error)
 
 
 def whereis(binary: str) -> list[str]:
@@ -679,6 +744,20 @@ def whereis(binary: str) -> list[str]:
     out.pop(0)
 
     return [x for x in out if os.access(x, os.X_OK)]
+
+
+def paste0(
+    *s: str | list[str],
+    collapse: str = "",
+) -> str:
+    return (collapse).join(flatten(s))
+
+
+def paste(
+    *s: str | list[str],
+    collapse: str = " ",
+) -> str:
+    return (collapse).join(flatten(s))
 
 
 def ls(
@@ -736,7 +815,11 @@ def unwrap(xs: Sequence) -> any:
     return xs[0]
 
 
-def push(xs: Sequence, *elements: any, index: int | None = None) -> Sequence:
+def push(
+    xs: Sequence,
+    *elements: any,
+    index: int | None = None,
+) -> Sequence:
     cls = type(xs)
     xs = list(xs)
     xs_len = len(xs)
@@ -761,7 +844,11 @@ def unpush(xs: Sequence, *elements: any) -> Sequence:
     return push(xs, *elements, index=0)
 
 
-def extend(xs: Sequence, *elements: any, index: int | None = None) -> Sequence:
+def extend(
+    xs: Sequence,
+    *elements: any,
+    index: int | None = None,
+) -> Sequence:
     cls = type(xs)
     xs = list(xs)
     xs_len = len(xs)
@@ -927,17 +1014,23 @@ def fzf(
     return [tbl[lookup[k]] for k in choice]
 
 
-def andgrep(s: str, *pattern: str | re.Pattern, flags=re.I) -> str | re.Pattern | None:
-    last_p = None
+def andgrep(
+    s: str,
+    *pattern: str | re.Pattern,
+    flags=re.I,
+) -> list[str | re.Pattern] | None:
     for p in pattern:
-        last_p = p
         if not re.search(p, s, flags=flags):
             return
 
-    return last_p
+    return pattern
 
 
-def orgrep(s: str, *pattern: str | re.Pattern, flags=re.I) -> str | re.Pattern | None:
+def orgrep(
+    s: str,
+    *pattern: str | re.Pattern,
+    flags=re.I,
+) -> str | re.Pattern | None:
     for p in pattern:
         if re.search(p, s, flags=flags):
             return p
@@ -963,7 +1056,6 @@ __all__ = [
     "deepcopy",
     "shallowcopy",
     "Result",
-
     #
     # file operations
     "rm",
