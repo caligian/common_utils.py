@@ -49,19 +49,57 @@ class Result:
     def map(self, f: Callable[[any], any], pcall: bool = False, **kwargs) -> Self:
         try:
             value = f(self.value)
-            return Result(True, value, None)
+            return self(True, value, None)
         except Exception as error:
+            value = type(error)
+            message = error.args[0]
+
+            if not pcall:
+                raise error
+            else:
+                return self(False, value, message)
+
+    def apply(
+        self,
+        f: Callable[[any], any],
+        *args,
+        pcall: bool = False,
+        **kwargs,
+    ) -> Self:
+        try:
+            self.value = f(self.value, *args, **kwargs)
+            self.ok = True
+
+            return self
+        except Exception as error:
+            self.ok = False
             self.value = type(error)
             self.message = error.args[0]
 
             if not pcall:
                 raise error
             else:
-                return Result(False, self.value, self.message)
+                return self
 
-    def when(self, f: Callable[[any], any], pcall: bool = False, **kwargs) -> Self:
-        if self.ok:
-            return self.map(f, pcall=pcall, **kwargs)
+    def when(
+        self,
+        cond: bool | Callable,
+        f: Callable[[any], any],
+        *args,
+        pcall: bool = False,
+        apply: bool = False,
+        **kwargs,
+    ) -> Self:
+        ok = False
+        if type(cond) is bool:
+            ok = cond
+        else:
+            ok = cond(self.value)
+
+        if ok and apply:
+            return self.apply(f, *args, pcall=pcall, **kwargs)
+        elif ok:
+            return self.map(f, *args, pcall=pcall, **kwargs)
         elif not pcall:
             self.errorf(**kwargs)
         else:

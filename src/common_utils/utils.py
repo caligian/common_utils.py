@@ -5,7 +5,6 @@ import datetime
 import sys
 import shutil
 import copy
-import collections
 
 from pickle import (
     load as pkl_load,
@@ -16,7 +15,7 @@ from pickle import (
 from csv import reader as csv_reader, writer as csv_writer
 from termcolor import cprint
 from functools import partial as _partial
-from typing import Callable
+from typing import Callable, Iterable
 from glob import glob
 from collections import namedtuple as nt
 from json import (
@@ -28,7 +27,7 @@ from json import (
 from functools import reduce as reduce_
 from pyfzf import FzfPrompt
 from sspipe import p as _p, px as _px
-from src.common_utils.input import Menu as _menu
+from src.common_utils.menu import Menu as _menu
 from src.common_utils.result import Result as _result
 
 Pattern = re.Pattern
@@ -64,6 +63,19 @@ dirname = os.path.dirname
 abspath = os.path.abspath
 stat = os.stat
 cpstat = shutil.copystat
+
+
+def some(x: Iterable) -> bool:
+    if isinstance(x, dict):
+        for value in x.values():
+            if value:
+                return True
+    else:
+        for value in x:
+            if value:
+                return x
+
+    return False
 
 
 def isa(x, *types: type) -> bool:
@@ -1039,6 +1051,7 @@ def orgrep(
 __all__ = [
     # misc stuff
     "ARGV",
+    "some",
     "ifelse",
     "unless",
     "ifNone",
