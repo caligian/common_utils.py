@@ -15,7 +15,7 @@ from pickle import (
 from csv import reader as csv_reader, writer as csv_writer
 from termcolor import cprint
 from functools import partial as _partial
-from typing import Callable, Iterable
+from typing import Callable
 from glob import glob
 from collections import namedtuple as nt
 from json import (
@@ -27,14 +27,17 @@ from json import (
 from functools import reduce as reduce_
 from pyfzf import FzfPrompt
 from sspipe import p as _p, px as _px
+
 from src.common_utils.menu import Menu as _menu
 from src.common_utils.result import Result as _result
+from src.common_utils.cmdline import Argv as _cmdparser
 
 Pattern = re.Pattern
 Container = list | tuple | dict
 Sequence = list | tuple
 Result = _result
 
+cmdparser = _cmdparser
 menu = _menu
 p = _p
 px = _px
@@ -65,7 +68,7 @@ stat = os.stat
 cpstat = shutil.copystat
 
 
-def some(x: Iterable) -> bool:
+def some(x: Container) -> bool:
     if isinstance(x, dict):
         for value in x.values():
             if value:
@@ -76,6 +79,19 @@ def some(x: Iterable) -> bool:
                 return x
 
     return False
+
+
+def all(x: Container) -> bool:
+    if isinstance(x, dict):
+        for value in x.values():
+            if not value:
+                return False
+        return True
+    else:
+        for value in x:
+            if not value:
+                return False
+        return True
 
 
 def isa(x, *types: type) -> bool:
@@ -244,28 +260,50 @@ def foreach(
     keep: Callable[[int | str, any], any] | Callable[[any], any] | None = None,
     exclude: Callable[[int | str], any] | Callable[[any], any] | None = None,
     stop_when: Callable[[int, str], bool] | Callable[[any], any] | None = None,
+    ignore_errors: bool = True,
     index: bool = False,
 ) -> Container:
     if index:
-        if apply:
+        if not apply:
 
             def apply(_, x):
-                x
+                return x
 
-        if keep:
+        if not keep:
 
             def keep(_, x):
-                x
+                return True
 
-        if exclude:
+        if not exclude:
 
             def exclude(_, x):
-                x
+                return False
+
+        if not stop_when:
+
+            def stop_when(_, x):
+                return False
+    else:
+        if not apply:
+
+            def apply(x):
+                return x
+
+        if not keep:
+
+            def keep(x):
+                if x:
+                    return True
+
+        if not exclude:
+
+            def exclude(x):
+                return False
 
         if stop_when:
 
-            def stop_when(_, x):
-                x
+            def stop_when(x):
+                return False
 
     res = {}
     it = None
@@ -283,11 +321,21 @@ def foreach(
     if index:
         for k, v in it:
             if keep(k, v) and not exclude(k, v) and not stop_when(k, v):
-                res.append(apply(k, v))
+                if ignore_errors and not is_error(v):
+                    res.append(apply(k, v))
+                elif is_error(v):
+                    raise_error(v, f"Key passed: {k}")
+                else:
+                    res.append(apply(k, v))
     else:
         for x in it:
             if keep(x) and not exclude(x) and not stop_when(x):
-                res.append(apply(x))
+                if ignore_errors and not is_error(v):
+                    res.append(apply(k, v))
+                elif is_error(v):
+                    raise_error(v, f"Key passed: {k}")
+                else:
+                    res.append(apply(k, v))
 
     return type(tbl)(res)
 
@@ -295,29 +343,33 @@ def foreach(
 def keep(
     tbl: Container,
     f: Callable[[int | str, any], any] | Callable[[any], any],
+    index: bool = False,
 ) -> Container:
-    return foreach(tbl, keep=f)
+    return foreach(tbl, keep=f, index=index)
 
 
 def tbl_apply(
     tbl: Container,
     f: Callable[[int | str, any], any] | Callable[[any], any],
+    index: bool = False,
 ) -> Container:
-    return foreach(tbl, apply=f)
+    return foreach(tbl, apply=f, index=index)
 
 
 def tbl_keep(
     tbl: Container,
     f: Callable[[int | str, any], any] | Callable[[any], any],
+    index: bool = False,
 ) -> Container:
-    return foreach(tbl, keep=f)
+    return foreach(tbl, keep=f, index=index)
 
 
 def tbl_exclude(
     tbl: Container,
     f: Callable[[int | str, any], any] | Callable[[any], any],
+    index: bool = False,
 ) -> Container:
-    return foreach(tbl, exclude=f)
+    return foreach(tbl, exclude=f, index=index)
 
 
 def is_error(x: any) -> bool:
@@ -336,10 +388,27 @@ def is_error(x: any) -> bool:
         return False
 
 
+def raise_error(x: type, msg: str | None = None) -> None:
+    if is_error(x):
+        if type(x) is type:
+            if type(msg) is str:
+                return x(msg)
+            else:
+                return x()
+        elif isinstance(msg, str):
+            raise_error(x, msg)
+        else:
+            raise_error(type(x), msg)
+    elif isinstance(msg, str):
+        raise Exception(msg)
+    else:
+        raise Exception(dict(argument=x, message=msg))
+
+
 def tbl_get(
     xs: Container,
     *ks: int | str | list[int | str],
-    pcall: bool = True,
+    pcall: bool = False,
 ) -> list[any]:
     res = []
 
@@ -375,7 +444,7 @@ def tbl_has(
 def tbl_set(
     xs: Container,
     *keys_and_values: tuple[any, any],
-    pcall: bool = True,
+    pcall: bool = False,
 ) -> Container | Exception:
     if len(keys_and_values) == 0:
         return xs
@@ -411,18 +480,19 @@ def splitlines(
 
 def grep(
     s: str,
-    pattern: str | Pattern,
+    *pattern: str | Pattern,
     **kwargs,
 ) -> re.Match | None:
-    return re.search(pattern, s, **kwargs)
+    for p in pattern:
+        return re.search(p, s, **kwargs)
 
 
 def tbl_grep(
     tbl: Container,
-    pattern: str | Pattern,
+    *pattern: str | Pattern,
     **kwargs,
 ) -> dict[any, re.Match] | list[re.Match]:
-    return tbl_keep(tbl, lambda _, v: re.search(pattern, v, **kwargs))
+    return tbl_keep(tbl, lambda v: grep(str(v), *pattern, **kwargs))
 
 
 def tbl_grepv(
@@ -489,7 +559,7 @@ def system(
     cmd: list[str] | str,
     capture: bool = True,
     splitlines: bool = False,
-    pcall: bool = True,
+    pcall: bool = False,
     chomp: bool = True,
     no_stdout: bool = False,
     no_stderr: bool = False,
@@ -537,7 +607,7 @@ def system(
 
 def systemlist(
     cmd: list[str] | str,
-    pcall: bool = True,
+    pcall: bool = False,
     chomp: bool = True,
     **kwargs,
 ) -> list[str] | Exception:
@@ -572,59 +642,71 @@ def rstrip(s: str) -> str:
 def slurp(
     filename: str,
     mode: str = "r",
-    filetype: str = "text",
+    format: str = "text",
     reader: Callable[[str | bytes], any] | None = None,
+    newlines: bool = False,
     chomp: bool = True,
 ) -> list[str] | str:
-    ft_is_text = filetype in ("json", "csv", "text")
-    ft_is_pkl = filetype in ("pickle", "pkl")
+    match format:
+        case ft if ft in ("json", "j"):
+            return read_json(filename)
+        case ft if ft in ("text", "txt", "t"):
+            with open(filename, mode) as fh:
+                text = fh.read()
+                text = chomp and text.strip() or text
 
-    if ft_is_text:
-        mode = "r"
-    elif ft_is_pkl:
-        mode = "rb"
-    else:
-        raise NotImplementedError(
-            "filetype should be any of json, csv, text, pickle, pkl"
-        )
-
-    with open(filename, mode) as fh:
-        if ft_is_text:
-            match filetype:
-                case "json":
-                    return read_json(filename)
-                case "csv":
-                    return read_csv(filename)
-                case _:
-                    if chomp:
-                        return rstrip(fh.read())
-                    else:
-                        return fh.read()
-        elif ft_is_pkl:
+                if newlines:
+                    return text.split("\n")
+                else:
+                    return text
+        case ft if ft in ("pickle", "pkl", "p"):
             return read_pkl(filename)
-        elif callable(reader):
-            return reader(fh)
+        case reader if callable(reader):
+            return reader(filename)
+        case ft:
+            raise NotImplementedError(f"{ft} reader is not implemented")
 
 
 def spit(
     filename: str,
-    text: str | list[str],
+    obj: any,
     mode: str = "w",
     format: str = "text",
 ) -> int:
-    with open(
-        filename,
-    ) as fh:
-        text_len = None
-        match text:
-            case list():
-                fh.writelines(text)
-                text_len = sum([len(x) for x in text])
-            case str():
-                fh.write(text)
-                text_len = len(text)
+    match format:
+        case ft if ft in ("json", "j"):
+            return write_json(filename, obj)
+        case ft if ft in ("text", "txt", "t"):
+            with open(filename, mode) as fh:
+                fh.write(str(obj))
+        case ft if ft in ("pickle", "pkl", "p"):
+            return write_pkl(filename, obj)
+        case writer if callable(writer):
+            return writer(filename, obj)
+        case ft:
+            raise NotImplementedError(f"{ft} writer is not implemented")
 
-        return text_len
+
+def readlines(filename: str) -> list[str]:
+    return slurp(filename, newlines=True)
+
+
+def writelines(
+    filename: str,
+    *text: list[str],
+    append_newline: bool = True,
+) -> int:
+    with open(filename, "w") as fh:
+        size = 0
+        for line in text:
+            if append_newline:
+                fh.write(line + "\n")
+                size += len(line) + 1
+            else:
+                fh.write(line)
+                size += len(line)
+
+        return size
 
 
 def sequence(xs: list | tuple) -> bool:
@@ -644,7 +726,8 @@ def flatten(xs: list | tuple, maxdepth: int = -1) -> list:
             if sequence(x):
                 current = len(result)
                 vector(x, current_depth + 1, result=result)
-                if current == len(result):
+
+                if len(result) == current:
                     result.append(x)
             else:
                 result.append(x)
@@ -721,7 +804,7 @@ def unlessNone(
     when_none: Callable | None = None,
 ) -> any:
     if value is not None:
-        return when_not_none()
+        return when_not_none(value)
     elif when_none is not None:
         return when_none()
     else:
@@ -736,7 +819,7 @@ def ifNone(
     if value is None:
         return when_none()
     elif when_not_none is not None:
-        return when_not_none()
+        return when_not_none(value)
     else:
         return value
 
@@ -786,13 +869,15 @@ def ls(
     files = (
         foreach(
             files,
-            keep=lambda _, s: pattern.search(s),
+            keep=lambda s: pattern.search(s),
+            index=False,
         )
         if not exclude
         else foreach(
             files,
-            keep=lambda _, s: pattern.search(s),
-            exclude=lambda _, s: exclude.search(s),
+            keep=lambda s: pattern.search(s),
+            exclude=lambda s: exclude.search(s),
+            index=False,
         )
     )
 
@@ -904,7 +989,7 @@ def pop(
     xs: list | dict,
     index: int | str = -1,
     default: Callable | None = None,
-    pcall: bool = True,
+    pcall: bool = False,
 ) -> any:
     if type(xs) is dict and type(index) is int:
         index = list(xs.keys())[index]
@@ -923,7 +1008,7 @@ def pop(
 def shift(
     xs: list,
     default: Callable | None = None,
-    pcall: bool = True,
+    pcall: bool = False,
 ) -> list:
     return pop(
         xs,
@@ -938,7 +1023,7 @@ def popn(
     n: int = 1,
     index: int | str = -1,
     reverse: bool = False,
-    pcall: bool = True,
+    pcall: bool = False,
     default: Callable | None = None,
 ) -> list[any]:
     res = []
@@ -963,7 +1048,7 @@ def shiftn(
     n: int = 1,
     index: int = -1,
     reverse: bool = False,
-    pcall: bool = True,
+    pcall: bool = False,
     default: Callable | None = None,
 ) -> list[any]:
     return popn(
@@ -1030,12 +1115,12 @@ def andgrep(
     s: str,
     *pattern: str | re.Pattern,
     flags=re.I,
-) -> list[str | re.Pattern] | None:
+) -> bool:
     for p in pattern:
         if not re.search(p, s, flags=flags):
-            return
+            return False
 
-    return pattern
+    return True
 
 
 def orgrep(
@@ -1045,8 +1130,24 @@ def orgrep(
 ) -> str | re.Pattern | None:
     for p in pattern:
         if re.search(p, s, flags=flags):
-            return p
+            return True
 
+    return False
+
+
+def strfind(
+    s: str,
+    pattern: re.Pattern | str,
+    flags=re.I,
+    start: int = 0,
+) -> tuple[int, int] | None:
+    s_required = s[start:]
+    if m := re.search(pattern, s_required, flags=flags):
+        span = m.span(0)
+        return (span[0] + start, span[1] + start)
+
+
+tbl_map = tbl_apply
 
 __all__ = [
     # misc stuff
@@ -1069,6 +1170,7 @@ __all__ = [
     "deepcopy",
     "shallowcopy",
     "Result",
+    "cmdparser",
     #
     # file operations
     "rm",
@@ -1132,6 +1234,7 @@ __all__ = [
     "rstrip",
     "andgrep",
     "orgrep",
+    "strfind",
     #
     # shell calls
     "system",
@@ -1142,6 +1245,7 @@ __all__ = [
     "foreach",
     "keep",
     "sequence",
+    "tbl_map",
     "tbl_apply",
     "tbl_keep",
     "tbl_exclude",

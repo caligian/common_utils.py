@@ -17,24 +17,20 @@ class Result:
             return self.value
 
     def errorf(self, **kwargs) -> None:
-        if type(self.message) is str:
-            if self.is_error():
-                if type(self.value) is type:
-                    raise self.value(self.message)
-                else:
-                    raise self.value
+        def raise_with_message():
+            if isinstance(type(self.message), str):
+                msg = self.message + r"\nObject passed: " + str(self.value)
+                raise self.value(msg.format(**kwargs))
             else:
-                raise Exception(self.message.format(**kwargs))
-        elif isinstance(self.value, Exception):
-            raise self.value
+                raise self.value(dict(message=self.message, kwargs=kwargs))
 
-        try:
-            if re.search("error|exception", self.value.__name__, re.I):
-                raise self.value(self.message.format(**kwargs))
-            else:
-                raise Exception(self.value)
-        except Exception:
-            raise Exception(self.value)
+        if self.is_error():
+            raise_with_message()
+        elif isinstance(type(self.message), str):
+            msg = self.message + r"\nObject passed: " + str(self.value)
+            raise Exception(msg.format(**kwargs))
+        else:
+            raise Exception(dict(message=self.message, kwargs=kwargs))
 
     def is_error(self) -> bool:
         if isinstance(self.value, Exception):
