@@ -2,17 +2,15 @@ import os
 import re
 import sys
 
-from argparse import ArgumentParser
 from typing import Callable, Self
-from termcolor import cprint, COLORS
+from termcolor import cprint
 
 # from prompt_toolkit import prompt
 from prompt_toolkit import print_formatted_text as print
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
-from prompt_toolkit.completion import FuzzyWordCompleter, WordCompleter, NestedCompleter
-from prompt_toolkit.validation import Validator, ValidationError
-from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+from prompt_toolkit.completion import NestedCompleter
+from prompt_toolkit.validation import Validator
 from prompt_toolkit.styles import Style
 
 from src.common_utils.result import Result
@@ -25,89 +23,137 @@ class Validators:
     def __getitem__(self, name: str) -> Validator | None:
         return self.validators.get(name)
 
-    def add(self, name: str, *fs: Callable[[str], Result]) -> None:
-        def snake_to_camelcase(s: str) -> str:
-            s = s.split("_")
-            s = [x.capitalize() for x in s]
-            s = ("_").join(s)
+    def add(
+        self,
+        name: str,
+        *fs: Callable[[str], Result],
+        error_message: str | None = None,
+        move_cursor_to_end: bool | None = None,
+    ) -> None:
+        assert error_message
+        error_message = error_message is None and "Validation error" or error_message
 
-            return s
+        if move_cursor_to_end is None:
+            move_cursor_to_end = True
 
-        def validator(this, document) -> None:
-            value = document.text
-            res = fs[0](value)
+        def validator(text) -> bool:
+            value = text
+            for f in fs:
+                value = f(value)
+                if not value:
+                    return False
 
-            for f in fs[1:]:
-                if not res.ok:
-                    raise ValidationError(message=res.message)
-                else:
-                    res = f(res.value)
+            return True
 
-            if not res.ok:
-                raise ValidationError(message=res.message)
-
-        validator_cls = type(f"{snake_to_camelcase(name)}Validator", (Validator,))
-        validator_cls.validate = validator
-        self.validators[name] = validator_cls()
-        self.completers: dict = {}
+        self.validators[name] = Validator.from_callable(
+            validator,
+            error_message=error_message,
+            move_cursor_to_end=move_cursor_to_end,
+        )
 
     @classmethod
     def with_defaults(cls) -> Self:
-        def is_float(x: str) -> Result:
-            if re.search(r"^[0-9]+[.][0-9]+$", x, re.I):
-                return Result(True)
-            else:
-                return Result(False, None, "Decimal expected")
-
-        def is_int(x: str) -> Result:
+        def is_float(x: str) -> bool:
             if re.search(r"^-?[0-9]+[.][0-9]+$", x, re.I):
-                return Result(True)
+                return x
             else:
-                return Result(False, None, "Integer expected")
+                return False
 
-        def is_natural_number(x: str) -> Result:
+        def is_int(x: str) -> bool:
+            if re.search(r"^-?[0-9]+$", x, re.I):
+                return x
+            else:
+                return False
+
+        def is_natural_number(x: str) -> bool:
             if re.search(r"^[0-9]+", x, re.I):
-                return Result(True)
+                return x
             else:
-                return Result(False, None, "Natural number expected")
+                return False
 
-        def is_file(x: str) -> Result:
+        def is_number(x: str) -> bool:
+            return (is_int(x) or is_float(x)) and x
+
+        def is_file(x: str) -> bool:
             if os.path.isfile(x):
-                return Result(True)
+                return x
             else:
-                return Result(False, None, f"{x} is not a valid filename")
+                return False
 
-        def is_dir(x: str) -> Result:
+        def is_dir(x: str) -> bool:
             if os.path.isdir(x):
-                return Result(True)
+                return x
             else:
-                return Result(False, None, f"{x} is not a valid directory name")
+                return False
 
-        def is_path(x: str) -> Result:
+        def is_path(x: str) -> bool:
             if os.path.exists(x):
-                return Result(True)
+                return x
             else:
-                return Result(False, None, f"{x} does not exist on filesystem")
+                return False
 
-        def is_non_empty(x: str) -> Result:
-            if len(x) != 0:
-                return Result(True)
+        def is_non_empty(x: str) -> bool:
+            if len(x) > 0:
+                return x
             else:
-                return Result(False, None, "No input provided")
+                return False
 
-        def add_validator(obj: Validators, name: str, f: Callable) -> None:
-            obj.add(name, is_non_empty, f)
+        def add_validator(
+            obj: Validators,
+            name: str,
+            *f: Callable,
+            error_message: str | None = None,
+        ) -> None:
+            obj.add(name, is_non_empty, *f, error_message=error_message)
 
         obj: Validators = cls()
-        obj.add("non_empty", is_non_empty)
-
-        add_validator(obj, "path", is_path)
-        add_validator(obj, "dir", is_dir)
-        add_validator(obj, "file", is_file)
-        add_validator(obj, "number", is_float)
-        add_validator(obj, "float", is_float)
-        add_validator(obj, "int", is_int)
-        add_validator(obj, "natural_number", is_natural_number)
+        obj.add(
+            "non_empty",
+            is_non_empty,
+            error_message="Input cannot be empty",
+        )
+        add_validator(
+            obj,
+            "path",
+            is_path,
+            error_message="Valid path expected",
+        )
+        add_validator(
+            obj,
+            "dir",
+            is_dir,
+            error_message="Nonexistent directory given",
+        )
+        add_validator(
+            obj,
+            "file",
+            is_file,
+            error_message="Nonexistent filename",
+        )
+        add_validator(
+            obj,
+            "number",
+            is_number,
+            error_message="Decimal number or integer expected",
+        )
+        add_validator(
+            obj,
+            "float",
+            is_float,
+            error_message="Decimal number expected",
+        )
+        add_validator(
+            obj,
+            "int",
+            is_int,
+            error_message="Integer expected",
+        )
+        add_validator(
+            obj,
+            "natural_number",
+            is_natural_number,
+            error_message="Natural number expected",
+        )
 
         return obj
 
@@ -118,6 +164,14 @@ class Prompt:
         history: str | None = None,
         prompt: str = "%",
     ) -> None:
+        if history is None:
+            history = os.path.join(
+                os.getenv("HOME"),
+                ".local",
+                "state",
+                "common_utils_default_session.history",
+            )
+
         self.prompt = prompt
         self.history_file = history
         self.history: FileHistory | None
@@ -133,20 +187,33 @@ class Prompt:
         self.mkstyle = Style.from_dict
         self.styles = {}
         self.completers: dict = {}
-        self.input: Callable | None = None
 
     def _raise_unless_init(self) -> None:
-        if not self.init_ok:
+        if not self.init_done:
             raise AssertionError("<object>.init(*args, **kwargs) has not been run")
 
     def init(self, *args, **kwargs) -> None:
         if self.history:
             self.session = PromptSession(*args, history=self.history, **kwargs)
-            self.init_done = True
-            self.input = self.session.prompt
+        else:
+            self.session = PromptSession(*args, **kwargs)
 
-    def add_validator(self, name: str, *fs: Callable[[str], Result]) -> None:
-        self.validators.add(name, *fs)
+        self.init_done = True
+        return self
+
+    def add_validator(
+        self,
+        name: str,
+        *fs: Callable[[str], Result],
+        error_message: str | None = None,
+        move_cursor_to_end: bool | None = None,
+    ) -> None:
+        self.validators.add(
+            name,
+            *fs,
+            error_message=error_message,
+            move_cursor_to_end=move_cursor_to_end,
+        )
 
     def add_completer(
         self,
@@ -154,7 +221,9 @@ class Prompt:
         children: dict[str, dict | set] | None = None,
     ) -> None:
         cmds = self.completers
-        for c in cmd[1:]:
+        for c in cmd[:-1]:
+            if not cmds.get(c):
+                cmds[c] = {}
             cmds = cmds[c]
 
         cmds[cmd[-1]] = children
@@ -164,24 +233,29 @@ class Prompt:
 
     def input(
         self,
-        message: str = "deepseek # ",
+        message: str | None = None,
+        prompt: str = "%",
         multiline: bool = False,
         default: any = None,
         validator: Validator | str | None = "non_empty",
         apply: Callable[[str], any] = lambda x: x,
-        on_eof: Callable = lambda: None,
-        on_interrupt: Callable = lambda: None,
     ) -> str | None:
         self._raise_unless_init()
 
         def get_multiline_message() -> list:
             return [
                 ("class:multiline", "[multiline] "),
-                ("class:prompt", message),
+                ("class:prompt", prompt),
             ]
 
         def get_message() -> list:
-            return [("class:prompt", message)]
+            return [("class:prompt", prompt)]
+
+        prompt: str
+        if not message:
+            prompt = f"{prompt} "
+        else:
+            prompt = f"{message} {prompt} "
 
         response: str
         style = self.mkstyle(
@@ -193,36 +267,46 @@ class Prompt:
         validator = self.validators["non_empty"] if validator is None else validator
         completer = self.make_completer()
 
-        try:
+        def get_response() -> str:
             if multiline:
-                response = self.session.prompt(
+                return self.session.prompt(
                     get_multiline_message(),
                     style=style,
                     multiline=True,
                     prompt_continuation=">> ",
                     completer=completer,
-                    validator=self.validators[validator],
+                    validator=validator,
                     validate_while_typing=True,
                 )
             else:
-                response = self.session.prompt(
+                return self.session.prompt(
                     get_message(),
                     style=style,
                     completer=completer,
-                    validator=self.validators[validator],
+                    validator=validator,
                     validate_while_typing=True,
                 )
+
+        try:
+            response = get_response()
         except KeyboardInterrupt:
             sys.stdout.flush()
-            on_interrupt()
-            return
+            cprint("KeyboardInterrupt", "red")
+
+            return self.input(
+                prompt=prompt,
+                multiline=multiline,
+                default=default,
+                validator=validator,
+                apply=apply,
+            )
         except EOFError:
             sys.stdout.flush()
-            on_eof()
-            raise EOFError
+            return
 
         response = response.strip()
         if len(response) == 0:
-            return None
+            return
         else:
             return apply(response)
+

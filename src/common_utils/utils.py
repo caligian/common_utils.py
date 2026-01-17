@@ -31,12 +31,38 @@ from sspipe import p as _p, px as _px
 from src.common_utils.menu import Menu as _menu
 from src.common_utils.result import Result as _result
 from src.common_utils.cmdline import Argv as _cmdparser
+from src.command_utils.error import (
+    make_exception as _make_exception,
+    is_exception as _is_exception,
+    as_exception as _as_exception,
+    make_error as _make_error,
+    is_error as _is_error,
+    as_error as _as_error,
+    bind_error as _bind_error,
+    bind_exception as _bind_exception,
+    raise_exception as _raise_exception,
+    raise_error as _raise_error,
+    raise_when as _raise_when,
+    raise_unless as _raise_unless,
+)
 
 Pattern = re.Pattern
 Container = list | tuple | dict
 Sequence = list | tuple
 Result = _result
 
+raise_when = _raise_when
+raise_unless = _raise_unless
+raise_error = _raise_error
+raise_exception = _raise_exception
+make_exception = _make_exception
+is_exception = _is_exception
+as_exception = _as_exception
+bind_exception = _bind_exception
+make_error = _make_error
+is_error = _is_error
+as_error = _as_error
+bind_error = _bind_error
 cmdparser = _cmdparser
 menu = _menu
 p = _p
@@ -321,8 +347,11 @@ def foreach(
     if index:
         for k, v in it:
             if keep(k, v) and not exclude(k, v) and not stop_when(k, v):
-                if ignore_errors and not is_error(v):
-                    res.append(apply(k, v))
+                if ignore_errors:
+                    if not is_error(v):
+                        res.append(apply(k, v))
+                    else:
+                        pass
                 elif is_error(v):
                     raise_error(v, f"Key passed: {k}")
                 else:
@@ -330,8 +359,11 @@ def foreach(
     else:
         for x in it:
             if keep(x) and not exclude(x) and not stop_when(x):
-                if ignore_errors and not is_error(v):
-                    res.append(apply(k, v))
+                if ignore_errors:
+                    if not is_error(v):
+                        res.append(apply(v))
+                    else:
+                        pass
                 elif is_error(v):
                     raise_error(v, f"Key passed: {k}")
                 else:
@@ -371,38 +403,6 @@ def tbl_exclude(
 ) -> Container:
     return foreach(tbl, exclude=f, index=index)
 
-
-def is_error(x: any) -> bool:
-    if isa(x, BaseException):
-        return True
-    elif isa(x, Exception):
-        return True
-    elif type(x) is type:
-        if endswith(x.__name__, "Error"):
-            return True
-        elif grep(x.__name__, "Exception"):
-            return True
-        else:
-            return False
-    else:
-        return False
-
-
-def raise_error(x: type, msg: str | None = None) -> None:
-    if is_error(x):
-        if type(x) is type:
-            if type(msg) is str:
-                return x(msg)
-            else:
-                return x()
-        elif isinstance(msg, str):
-            raise_error(x, msg)
-        else:
-            raise_error(type(x), msg)
-    elif isinstance(msg, str):
-        raise Exception(msg)
-    else:
-        raise Exception(dict(argument=x, message=msg))
 
 
 def tbl_get(
@@ -1270,6 +1270,14 @@ __all__ = [
     "shiftn",
     "namedtuple",
     "reduce",
+    #
+    # Exception
+    "make_exception",
+    "is_exception",
+    "as_exception",
+    "make_error",
+    "is_error",
+    "as_error",
     #
     # menu
     "fzf",

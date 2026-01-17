@@ -19,7 +19,7 @@ class Result:
     def errorf(self, **kwargs) -> None:
         def raise_with_message():
             if isinstance(type(self.message), str):
-                msg = self.message + r"\nObject passed: " + str(self.value)
+                msg = self.message
                 raise self.value(msg.format(**kwargs))
             else:
                 raise self.value(dict(message=self.message, kwargs=kwargs))
@@ -27,13 +27,15 @@ class Result:
         if self.is_error():
             raise_with_message()
         elif isinstance(type(self.message), str):
-            msg = self.message + r"\nObject passed: " + str(self.value)
+            msg = self.message
             raise Exception(msg.format(**kwargs))
         else:
-            raise Exception(dict(message=self.message, kwargs=kwargs))
+            raise Exception(dict(message=self.message, value=self.value))
 
     def is_error(self) -> bool:
-        if isinstance(self.value, Exception):
+        if isinstance(self.value, BaseException):
+            return True
+        elif isinstance(self.value, Exception):
             return True
         elif type(self.value) is type and re.search(
             "error|exception", self.value.__name__, re.I
@@ -48,7 +50,12 @@ class Result:
             return self(True, value, None)
         except Exception as error:
             value = type(error)
-            message = error.args[0]
+            message = None
+
+            if len(error.args) == 1 and isinstance(error.args[0], str):
+                message = error.args[0]
+            else:
+                message = error.args
 
             if not pcall:
                 raise error
@@ -70,7 +77,11 @@ class Result:
         except Exception as error:
             self.ok = False
             self.value = type(error)
-            self.message = error.args[0]
+
+            if len(error.args) == 1 and isinstance(error.args[0], str):
+                self.message = error.args[0]
+            else:
+                self.message = error.args
 
             if not pcall:
                 raise error
@@ -100,3 +111,27 @@ class Result:
             self.errorf(**kwargs)
         else:
             return Result(False, self.value, self.message)
+
+    @classmethod
+    def from_value(
+        cls,
+        value: any,
+        ok: bool = True,
+        message: str | None = None,
+    ) -> Self:
+        return cls(ok, value, message)
+
+    @classmethod
+    def bind(cls, f: Callable) -> Callable[[...], Self]:
+        def function(*args, **kwargs):
+            try:
+                value = f(*args, **kwargs)
+                return cls(True, value)
+            except Exception as error:
+                return cls(False, error)
+
+        return function
+
+    @classmethod
+    def bind_all(cls, *f: Callable) -> list[Callable[[...], Self]]:
+        return [cls.bind(x) for x in f]
