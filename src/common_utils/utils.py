@@ -44,6 +44,11 @@ from src.command_utils.error import (
     raise_error as _raise_error,
     raise_when as _raise_when,
     raise_unless as _raise_unless,
+    get_error_message as _get_error_message,
+    set_error_message as _set_error_message,
+    error_class as _error_class,
+    is_error_instance as _is_error_instance,
+    is_error_type as _is_error_type
 )
 
 Pattern = re.Pattern
@@ -51,6 +56,18 @@ Container = list | tuple | dict
 Sequence = list | tuple
 Result = _result
 
+error_class = _error_class
+is_error_type = _is_error_type
+is_error_instance = _is_error_instance 
+exception_class = _error_class
+is_exception_type = _is_error_type
+is_exception_instance = _is_error_instance 
+error_message = _get_error_message
+get_error_message = _get_error_message
+set_error_message = _set_error_message
+exception_message = error_message
+get_exception_message = get_error_message
+set_exception_message = set_error_message
 raise_when = _raise_when
 raise_unless = _raise_unless
 raise_error = _raise_error
@@ -66,7 +83,7 @@ bind_error = _bind_error
 cmdparser = _cmdparser
 menu = _menu
 p = _p
-px = _px
+it = _px
 deepcopy = copy.deepcopy
 shallowcopy = copy.copy
 load_pkl = _load_pkl
@@ -402,7 +419,6 @@ def tbl_exclude(
     index: bool = False,
 ) -> Container:
     return foreach(tbl, exclude=f, index=index)
-
 
 
 def tbl_get(
@@ -1161,7 +1177,7 @@ __all__ = [
     "has_argv",
     "isa",
     "p",
-    "px",
+    "it",
     "identity",
     "partial",
     "is_error",
@@ -1278,6 +1294,18 @@ __all__ = [
     "make_error",
     "is_error",
     "as_error",
+    "error_message",
+    "get_error_message",
+    "set_error_message",
+    "exception_message",
+    "get_exception_message",
+    "set_exception_message",
+    "error_class",
+    "is_error_type",
+    "is_error_instance",
+    "exception_class",
+    "is_exception_type",
+    "is_exception_instance",
     #
     # menu
     "fzf",

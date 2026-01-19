@@ -11,24 +11,47 @@ from src.common_utils.prompt import Prompt
 from src.common_utils.result import Result
 
 
+class CLINoSuchCommandError(Exception):
+    pass
+
+
+class CLIInvalidArgumentsError(Exception):
+    pass
+
+
 class CLICommand:
     def __init__(self, name: str) -> None:
         self.name = name
         self.children: dict = {}
         self.parser = Argv(prog=name)
+        self.parent: Self | None = None
 
-    def get(self, *command: str) -> None | Self:
-        final = self.children.get(command[0])
-        if final is None:
-            return 
+    def on(self, *args, **kwargs):
+        return self.parser.on(*args, **kwargs)
 
-        children = final
-        for cmd in command[1:-1]:
-            final = children.get(cmd)
-            if final is None:
-                return
+    def get(
+        self,
+        *command: str,
+        parent: Self | None = None,
+        create: bool = False,
+    ) -> None | Self:
+        if len(command) == 0:
+            return parent
 
-        return final.get(command[-1])
+        first = command[0]
+        rest = command[1:]
+        parent: CLICommand = self if parent is None else parent
+        command: CLICommand = parent.children.get(first)
+
+        if command is None:
+            if create:
+                command = type(self)(first)
+                command.parent = parent
+                parent.children[first] = command
+            else:
+                return None
+        else:
+            return self.get(*rest, parent=command, create=create)
 
     def __getitem__(self, command: str | tuple) -> None | Self:
         command = [command] if type(command) is str else command
@@ -38,25 +61,7 @@ class CLICommand:
         return self.parser.parse(args, pcall=True)
 
     def add(self, *command: str) -> Self:
-        cls = type(self)
-        children = self.children
-        prev = children
-
-        for name in command[:-1]:
-            children = children.get(name)
-
-            if not children:
-                children = cls(name)
-
-            prev[name] = children
-            prev = children.children
-
-        last = children[command[-1]]
-        if not last:
-            last = cls(command[-1])
-
-        prev[command[-1]] = last
-        return self
+        return self.get(*command, create=True)
 
 
 class CLIParser:
@@ -73,30 +78,97 @@ class CLIParser:
         self.prompt: Prompt = Prompt(self.history_file, prompt=prompt)
         self.input = self.prompt.input
 
-    def add_command(self, *name: str) -> CLICommand:
-        n = name[0]
-        command = self.commands.get(n)
-        command = CLICommand(n) if type(command) is None else command
-        self.commands[n] = command
+    def add_command(self, *name: str, parent=None) -> CLICommand:
+        if len(name) == 0:
+            return parent
 
-        if len(name[1:]) > 0:
-            return self.add_command(*name[1:])
+        first = name[0]
+
+        if parent:
+            command = parent.children.get(first)
+            command = CLICommand(first) if command is None else command
+            parent.children[first] = command
+            return self.add_command(*name[1:], parent=command)
         else:
-            return command
+            self.commands[first] = CLICommand(first)
+            return self.add_command(*name[1:], parent=self.commands[first])
 
-    def get_command_from_args(self, args: list[str]) -> 
+    def strip_args(self, args: list[str]) -> list[str]:
+        return [x.lstrip().rstrip() for x in args]
 
+    def get_command_from_args(
+        self,
+        args: list[str],
+        prefix: str = "",
+        parse: bool = False,
+    ) -> tuple[CLICommand, list[str]] | None:
+        till_non_word = -1
+        for i, x in enumerate(args):
+            if not re.search(r"[a-z_]", x[0]):
+                till_non_word = i
+                break
 
+        before_non_word = args[:till_non_word]
+        after_non_word = args[till_non_word:]
+        first = before_non_word[0]
+        command = self.commands.get(first)
 
+        if command is None:
+            if prefix:
+                return Result(
+                    False,
+                    CLINoSuchCommandError,
+                    f"No such command: {first}",
+                )
+            else:
+                return Result(
+                    False,
+                    CLINoSuchCommandError,
+                    f"{prefix}: No such command {first}",
+                )
 
+        if len(before_non_word) == 0:
+            if parse:
+                return self
+            else:
+                return command.parse(after_non_word)
 
+        subcommand = None
+        subcommand_index = -1
+        before_non_word = before_non_word[1:]
+        index = list(range(1, len(before_non_word) + 1))
 
+        try:
+            while i := index.pop():
+                subcommand = command.get(*before_non_word[:i])
+                if subcommand:
+                    subcommand_index = i
+                    break
+        except IndexError:
+            pass
 
+        if subcommand_index == -1:
+            return command.parse(after_non_word)
+        else:
+            args = before_non_word[subcommand_index:]
+            args += after_non_word
+            return subcommand.parse(args)
 
+    def get(self, *command: str) -> CLICommand | None:
+        first = command[0]
+        if not self.commands.get(first):
+            return None
+        else:
+            return self.commands[first].get(*command[1:])
 
-    def is_valid_command(self, *command: str) -> bool:
-        pass
+    def __getitem__(self, command: str | tuple) -> CLICommand | None:
+        command = [command] if isinstance(command, str) else command
+        return self.get_command(*command)
 
+    def on(self, command: str | list[str], *args, **kwargs) -> None:
+        command = [command] if isinstance(command, str) else command
+        command: CLICommand = self.get_command(*command)
+        command.on(*args, **kwargs)
 
     def parse(
         self,
@@ -110,49 +182,26 @@ class CLIParser:
         apply: Callable[[str], any] = lambda x: x,
     ) -> any:
         assert from_input or args, "Expected either user input or args to be supplied"
-        args = from_input and self.input(
-            message=message,
-            prompt=prompt,
-            multiline=multiline,
-            default=default,
-            validator=validator,
-            apply=apply,
-        ) or args
+        args = (
+            from_input
+            and self.input(
+                message=message,
+                prompt=prompt,
+                multiline=multiline,
+                default=default,
+                validator=validator,
+                apply=apply,
+            )
+            or args
+        )
 
         if isinstance(type(args), str):
             args = shlex.split(args)
 
         assert len(args) > 0, "Empty input"
 
-        main_command: str = args[0]
-        main_command: CLICommand = self.commands[main_command]
-        subcommands: list[str] = []
 
-        for arg in args[1:]:
-            if args[0] == '-':
-                break
-            else:
-                subcommands.append(arg)
-
-
-        for sub in subcommands:
-
-
-
-
-
-
-        return main_command.parse
-
-
-
-
-
-
-
-command = CLICommand("kaushik")
-command.add("krunal", "karun", "brishti")
-
-parser = argparse.ArgumentParser(prog="ask")
-sub = parser.add_subparsers(title="with")
-sub.add_parser("table")
+cli = CLIParser()
+cli.add_command("kaushik", "krunal", "brishti")
+res = cli.get_command_from_args(["kaushik", "krunal", "-i", "1", "2"])
+print(res.value)

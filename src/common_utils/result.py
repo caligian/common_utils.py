@@ -1,125 +1,110 @@
 import re
 
 from dataclasses import dataclass, field
-from typing import Self, Callable
+from typing import Self, Callable, Generic, TypeVar
+from src.common_utils.error import (
+    is_error,
+    error_message,
+    error_class,
+    is_error_instance,
+)
+
+T = TypeVar("T")
 
 
 @dataclass
-class Result:
+class Result(Generic[T]):
     ok: bool
-    value: any
+    value: T
     message: str | None = field(default=None)
 
-    def unwrap(self) -> any:
+    def __post_init__(self) -> None:
+        if is_error_instance(self.value):
+            self.message = error_message(self.value)
+            self.value = type(self.value)
+
+    def unwrap(self, message: str | None = None) -> any:
         if self.is_error():
-            raise self.errorf()
+            raise self.errorf(message=message)
         else:
             return self.value
 
-    def errorf(self, **kwargs) -> None:
-        def raise_with_message():
-            if isinstance(type(self.message), str):
-                msg = self.message
-                raise self.value(msg.format(**kwargs))
-            else:
-                raise self.value(dict(message=self.message, kwargs=kwargs))
+    def errorf(self, message: str | None = None) -> None:
+        message = message if message else self.message
+        str_message = isinstance(message, (str, bytes))
 
         if self.is_error():
-            raise_with_message()
-        elif isinstance(type(self.message), str):
-            msg = self.message
-            raise Exception(msg.format(**kwargs))
+            error = error_class(self.value)
+            if str_message:
+                raise error(message)
+            else:
+                raise error(str(message))
+        elif str_message:
+            raise Exception(message)
         else:
-            raise Exception(dict(message=self.message, value=self.value))
+            raise Exception(str(message))
 
     def is_error(self) -> bool:
-        if isinstance(self.value, BaseException):
-            return True
-        elif isinstance(self.value, Exception):
-            return True
-        elif type(self.value) is type and re.search(
-            "error|exception", self.value.__name__, re.I
-        ):
-            return True
-        else:
-            return False
+        return is_error(self.value)
 
-    def map(self, f: Callable[[any], any], pcall: bool = False, **kwargs) -> Self:
+    def is_ok(self) -> bool:
+        return not self.is_error() and self.ok
+
+    def map(
+        self,
+        f: Callable[[any], any],
+        *args,
+        pcall: bool = False,
+        **kwargs,
+    ) -> Self:
+        cls = type(self)
+
         try:
-            value = f(self.value)
-            return self(True, value, None)
+            value = f(self.value, *args, **kwargs)
+            return cls(True, value, None)
         except Exception as error:
             value = type(error)
-            message = None
-
-            if len(error.args) == 1 and isinstance(error.args[0], str):
-                message = error.args[0]
-            else:
-                message = error.args
+            message = error_message(error)
 
             if not pcall:
                 raise error
             else:
                 return self(False, value, message)
 
-    def apply(
-        self,
-        f: Callable[[any], any],
-        *args,
-        pcall: bool = False,
-        **kwargs,
-    ) -> Self:
-        try:
-            self.value = f(self.value, *args, **kwargs)
-            self.ok = True
-
-            return self
-        except Exception as error:
-            self.ok = False
-            self.value = type(error)
-
-            if len(error.args) == 1 and isinstance(error.args[0], str):
-                self.message = error.args[0]
-            else:
-                self.message = error.args
-
-            if not pcall:
-                raise error
-            else:
-                return self
-
     def when(
         self,
-        cond: bool | Callable,
         f: Callable[[any], any],
         *args,
         pcall: bool = False,
-        apply: bool = False,
+        message: str | None = None,
         **kwargs,
     ) -> Self:
-        ok = False
-        if type(cond) is bool:
-            ok = cond
-        else:
-            ok = cond(self.value)
+        ok = self.ok
+        message = message if not self.message else self.message
 
-        if ok and apply:
-            return self.apply(f, *args, pcall=pcall, **kwargs)
-        elif ok:
+        if ok:
             return self.map(f, *args, pcall=pcall, **kwargs)
         elif not pcall:
-            self.errorf(**kwargs)
+            self.errorf(message=message)
         else:
-            return Result(False, self.value, self.message)
+            return Result(False, self.value, message)
 
     @classmethod
-    def from_value(
-        cls,
-        value: any,
-        ok: bool = True,
-        message: str | None = None,
-    ) -> Self:
-        return cls(ok, value, message)
+    def Failure(cls, value: any, message: str | None = None) -> Self:
+        if not message:
+            if is_error(value):
+                message = error_message(value)
+                value = (
+                    type(value)
+                    if isinstance(value, (BaseException, Exception))
+                    else value
+                )
+
+        return cls(False, value, message)
+
+    @classmethod
+    def Success(cls, value: any) -> Self:
+        return cls(True, value)
 
     @classmethod
     def bind(cls, f: Callable) -> Callable[[...], Self]:
@@ -135,3 +120,6 @@ class Result:
     @classmethod
     def bind_all(cls, *f: Callable) -> list[Callable[[...], Self]]:
         return [cls.bind(x) for x in f]
+
+
+result = Result.Failure(AssertionError("some message"))
