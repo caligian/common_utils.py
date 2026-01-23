@@ -26,64 +26,63 @@ from json import (
 )
 from functools import reduce as reduce_
 from pyfzf import FzfPrompt
-from sspipe import p as _p, px as _px
 
-from src.common_utils.menu import Menu as _menu
-from src.common_utils.result import Result as _result
-from src.common_utils.cmdline import Argv as _cmdparser
-from src.command_utils.error import (
-    make_exception as _make_exception,
-    is_exception as _is_exception,
-    as_exception as _as_exception,
-    make_error as _make_error,
-    is_error as _is_error,
-    as_error as _as_error,
-    bind_error as _bind_error,
-    bind_exception as _bind_exception,
-    raise_exception as _raise_exception,
-    raise_error as _raise_error,
-    raise_when as _raise_when,
-    raise_unless as _raise_unless,
-    get_error_message as _get_error_message,
-    set_error_message as _set_error_message,
-    error_class as _error_class,
-    is_error_instance as _is_error_instance,
-    is_error_type as _is_error_type
+from sspipe import p, px
+from src.common_utils.menu import Menu as menu
+from src.common_utils.result import Success, Failure, UnwrapError, safe
+from src.common_utils.cmdline import Argv
+from src.common_utils.error import (
+    # Make error type
+    make_error,
+    make_exception,
+    #
+    # Raise errors
+    raise_when,
+    raise_unless,
+    raise_error,
+    raise_exception,
+    #
+    # Get error type
+    as_error,
+    error_class,
+    exception_class,
+    get_exception_class,
+    get_error_class,
+    #
+    # Check type | instance
+    is_error,
+    is_error_type,
+    is_error_instance,
+    is_error_class,
+    is_exception,
+    is_exception_type,
+    is_exception_instance,
+    is_exception_class,
+    #
+    # Error message
+    error_message,
+    set_error_message,
+    get_error_message,
+    exception_message,
+    set_exception_message,
+    get_exception_message,
+    #
+    # Error arguments
+    error_args,
+    get_error_args,
+    exception_args,
+    set_exception_args,
+    get_exception_args,
 )
 
 Pattern = re.Pattern
 Container = list | tuple | dict
 Sequence = list | tuple
-Result = _result
+ExceptionLike = Exception | BaseException | type
+StrLike = str | bytes
 
-error_class = _error_class
-is_error_type = _is_error_type
-is_error_instance = _is_error_instance 
-exception_class = _error_class
-is_exception_type = _is_error_type
-is_exception_instance = _is_error_instance 
-error_message = _get_error_message
-get_error_message = _get_error_message
-set_error_message = _set_error_message
-exception_message = error_message
-get_exception_message = get_error_message
-set_exception_message = set_error_message
-raise_when = _raise_when
-raise_unless = _raise_unless
-raise_error = _raise_error
-raise_exception = _raise_exception
-make_exception = _make_exception
-is_exception = _is_exception
-as_exception = _as_exception
-bind_exception = _bind_exception
-make_error = _make_error
-is_error = _is_error
-as_error = _as_error
-bind_error = _bind_error
-cmdparser = _cmdparser
-menu = _menu
-p = _p
-it = _px
+pipe = p
+it = px
 deepcopy = copy.deepcopy
 shallowcopy = copy.copy
 load_pkl = _load_pkl
@@ -109,6 +108,10 @@ dirname = os.path.dirname
 abspath = os.path.abspath
 stat = os.stat
 cpstat = shutil.copystat
+
+
+def is_str_like(s: any) -> bool:
+    return isinstance(s, (str, bytes))
 
 
 def some(x: Container) -> bool:
@@ -156,8 +159,8 @@ def file_extension(filename: str) -> str:
 
 def has_extension(filename: str, *pattern: str | re.Pattern) -> bool:
     extension = file_extension(filename)
-    for p in pattern:
-        if re.search(p, extension, flags=re.I):
+    for pat in pattern:
+        if re.search(pat, extension, flags=re.I):
             return True
 
     return False
@@ -294,9 +297,6 @@ def msg_warn(*s: str, color: str = "yellow", **kwargs) -> None:
     cprint(*s, color=color, **kwargs)
 
 
-msg_ok = msg_success
-
-
 def foreach(
     tbl: Container,
     apply: Callable[[int | str, any], any] | Callable[[any], any] | None = None,
@@ -430,9 +430,9 @@ def tbl_get(
 
     for k in ks:
         match assoc(xs, k):
-            case Result(ok=True, value=x):
+            case Success(x):
                 res.append(x)
-            case Result(ok=False, value=error):
+            case Failure(error):
                 if not pcall:
                     raise error
                 else:
@@ -449,9 +449,9 @@ def tbl_has(
 
     for k in ks:
         match assoc(xs, k):
-            case Result(ok=True, value=value):
+            case Success(value):
                 res.append(value)
-            case Result(ok=False):
+            case Failure():
                 res.append(False)
 
     return res
@@ -467,9 +467,9 @@ def tbl_set(
 
     for k, v in keys_and_values:
         match assoc(xs, k, value=v):
-            case Result(ok=True):
+            case Success():
                 continue
-            case Result(ok=False, value=error):
+            case Failure(error):
                 if not pcall:
                     raise error
                 else:
@@ -499,8 +499,8 @@ def grep(
     *pattern: str | Pattern,
     **kwargs,
 ) -> re.Match | None:
-    for p in pattern:
-        return re.search(p, s, **kwargs)
+    for pat in pattern:
+        return re.search(pat, s, **kwargs)
 
 
 def tbl_grep(
@@ -758,21 +758,21 @@ def assoc(
     d: Container,
     ks: any,
     value: any = None,
-) -> tuple[bool, any, Container]:
+) -> Success | Failure:
     v = d
     for k in ks[:-1]:
         try:
             v = v[k]
         except Exception as error:
-            return Result(False, error, v)
+            return Failure(error)
 
     k = ks[-1]
     try:
         if value is not None:
             v[k] = value
-        return Result(True, v[k], v)
+        return Success(v[k])
     except Exception as error:
-        return Result(False, error, v)
+        return Failure(error)
 
 
 def as_list(xs: any, force: bool = False) -> list:
@@ -840,12 +840,12 @@ def ifNone(
         return value
 
 
-def pcall(f, *args, **kwargs) -> Result:
+def pcall(f, *args, **kwargs) -> Success | Failure:
     try:
         output = f(*args, **kwargs)
-        return Result(True, output)
+        return Success(output)
     except Exception as error:
-        return Result(False, error)
+        return Failure(error)
 
 
 def whereis(binary: str) -> list[str]:
@@ -1164,6 +1164,7 @@ def strfind(
 
 
 tbl_map = tbl_apply
+msg_ok = msg_success
 
 __all__ = [
     # misc stuff
@@ -1176,7 +1177,7 @@ __all__ = [
     "pcall",
     "has_argv",
     "isa",
-    "p",
+    "pipe",
     "it",
     "identity",
     "partial",
@@ -1185,8 +1186,10 @@ __all__ = [
     "not_blank",
     "deepcopy",
     "shallowcopy",
-    "Result",
-    "cmdparser",
+    "Success",
+    "Failure",
+    "safe",
+    "UnwrapError",
     #
     # file operations
     "rm",
@@ -1288,26 +1291,54 @@ __all__ = [
     "reduce",
     #
     # Exception
-    "make_exception",
-    "is_exception",
-    "as_exception",
+    # Make error type
     "make_error",
-    "is_error",
+    "make_exception",
+    # Raise errors
+    "raise_when",
+    "raise_unless",
+    "raise_error",
+    "raise_exception",
+    #
+    # Get error type
     "as_error",
-    "error_message",
-    "get_error_message",
-    "set_error_message",
-    "exception_message",
-    "get_exception_message",
-    "set_exception_message",
     "error_class",
+    "exception_class",
+    "get_exception_class",
+    "get_error_class",
+    #
+    # Check type | instance
+    "is_error",
     "is_error_type",
     "is_error_instance",
-    "exception_class",
+    "is_error_class",
+    "is_exception",
     "is_exception_type",
     "is_exception_instance",
+    "is_exception_class",
+    #
+    # Error message
+    "error_message",
+    "set_error_message",
+    "get_error_message",
+    "exception_message",
+    "set_exception_message",
+    "get_exception_message",
+    #
+    # Error arguments
+    "error_args",
+    "get_error_args",
+    "exception_args",
+    "set_exception_args",
+    "get_exception_args",
+    #
+    # Convert functions to release error on failure
+    "safe",
     #
     # menu
     "fzf",
     "menu",
+    #
+    # Command parser
+    "Argv",
 ]

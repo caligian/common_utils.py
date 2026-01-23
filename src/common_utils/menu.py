@@ -5,7 +5,12 @@ from typing import Callable
 from dataclasses import dataclass, field
 from termcolor import cprint
 from pyfzf import FzfPrompt
-from src.common_utils.result import Result
+from src.common_utils.result import Success, Failure, T
+from src.common_utils.error import error_message
+
+
+MenuCommandApplyFunction = Callable[[str], Success[T] | Failure[ValueError]]
+MenuCommandCondFunction = Callable[[str], bool | Failure[ValueError]]
 
 
 class InvalidCommandError(Exception):
@@ -51,7 +56,10 @@ def max_key_width(xs: list[str]):
     return range(0, len(xs)) | p(list) | p(map, str, px) | p(map, len, px) | p(max)
 
 
-def parse_range(n: int | list[int], inp: str) -> list[int]:
+def parse_range(
+    n: int | list[int],
+    inp: str,
+) -> Success[list[int]] | Failure[InvalidArgumentError]:
     inp = inp.lstrip().rstrip()
     exclude = inp[0] == "^"
     inp = exclude and inp[1:] or inp
@@ -66,29 +74,24 @@ def parse_range(n: int | list[int], inp: str) -> list[int]:
         try:
             inp = [int(x) for x in inp]
         except ValueError:
-            return Result(
-                False,
-                InvalidArgumentError,
-                f"expected {{start_index}}-{{end_index}}, got {inp_}",
+            error = InvalidArgumentError(
+                f"expected {{start_index}}-{{end_index}}, got {inp_}"
             )
+            return Failure(error)
         start, end = inp
         start, end = int(inp[0]), int(inp[1])
 
         if start == 0 or end == 0:
-            return Result(
-                False,
-                InvalidArgumentError,
-                "menu items are not zero-indexed",
-            )
+            return Failure(InvalidArgumentError("menu items are not zero-indexed"))
 
         start = n + start if start < 0 else start
         end = n + end if end < 0 else end
 
         if start >= end:
-            return Result(
-                False,
-                InvalidArgumentError,
-                f"expected {{start_index}} < {{end_index}}, got start={start}, end={end}",
+            return Failure(
+                InvalidArgumentError(
+                    f"expected {{start_index}} < {{end_index}}, got start={start}, end={end}"
+                )
             )
 
         index = list(range(start, end + 1))
@@ -96,22 +99,19 @@ def parse_range(n: int | list[int], inp: str) -> list[int]:
         try:
             index = [int(inp)]
             if index[0] == 0:
-                return Result(
-                    False,
-                    InvalidArgumentError,
-                    "menu items are not zero index while selection",
+                return Failure(
+                    InvalidArgumentError(
+                        "menu items are not zero index while selection"
+                    )
                 )
+
         except ValueError:
-            return Result(
-                False,
-                InvalidArgumentError,
-                f"expected an integer , got {inp}",
-            )
+            return Failure(InvalidArgumentError(f"expected an integer, got {inp}"))
 
     if exclude:
-        return Result(True, list(filter(lambda x: x not in index, n)))
+        return Success(list(filter(lambda x: x not in index, n)))
     else:
-        return Result(True, index)
+        return Success(index)
 
 
 @dataclass
@@ -120,12 +120,22 @@ class MenuCommand:
     desc: str
     nargs: str | int = field(default=1)
     aliases: list[str] | None = field(default=None)
-    cond: Callable[[str], bool] = field(default=lambda s=None: True)
-    process: Callable[[str], str] = field(default=lambda s=None: s)
+    cond: list[MenuCommandApplyFunction] | MenuCommandApplyFunction = field(
+        default_factory=lambda: [lambda s=None: True]
+    )
+    apply: list[MenuCommandCondFunction] | MenuCommandCondFunction = field(
+        default_factory=lambda: [lambda s: Success(s)]
+    )
 
     def __post_init__(self) -> None:
         assert (self.nargs in ["+", "*", "?"]) or (type(self.nargs) is int)
         self.help: str = self.make_help()
+
+        if isinstance(self.cond, list):
+            self.cond = [self.cond]
+
+        if isinstance(self.apply, list):
+            self.apply = [self.apply]
 
     def make_help(self) -> str:
         res = [self.name, " "]
@@ -151,67 +161,110 @@ class MenuCommand:
     def print_help(self) -> None:
         print(self.help)
 
-    def process_value(self, x: str | list[str] | None = None) -> any:
+    def check(self, x: str | list[str] | None) -> bool | Failure[ValueError]:
         if x is None:
-            return
+            return Success(x)
 
-        functions = [self.process] if type(self.process) is not list else self.process
-        for f in functions:
-            x = f(x)
+        x = Success(x)
+        for f in self.apply:
+            try:
+                match f(x.value):
+                    case Failure() as failure:
+                        return failure
+                    case Success(value):
+                        x = value
+                    case value:
+                        x = value
+            except ValueError as error:
+                return Failure(error)
+
+    def process(
+        self, x: str | list[str] | None = None
+    ) -> Success | Failure[ValueError]:
+        match self.check(x):
+            case Failure() as failure:
+                return failure
+            case _:
+                pass
+
+        if x is None:
+            return Success(x)
+
+        x = Success(x)
+        for f in self.apply:
+            try:
+                match f(x.value):
+                    case Success() as success:
+                        x = success
+                    case Failure() as failure:
+                        return failure
+                    case value:
+                        x = value
+            except ValueError as error:
+                return Failure(error)
 
         return x
 
-    def parse(self, user_input: str | None = None) -> Result:
+    def parse(
+        self,
+        user_input: str | None = None,
+    ) -> (
+        Success
+        | Failure[
+            VoidCommandError
+            | TooManyArgumentsError
+            | NotEnoughArgumentsError
+            | ValueError
+        ]
+    ):
         user_input = "" if user_input is None else user_input
         user_input = user_input.lstrip().rstrip()
-        ok = self.cond(user_input)
-
-        if not ok:
-            raise AssertionError(user_input)
 
         match self.nargs:
             case 1:
-                return Result(True, self.process(user_input))
+                return self.process(user_input)
             case 0:
                 if user_input != "":
-                    return Result(False, VoidCommandError, self.name)
+                    return Failure(
+                        VoidCommandError(
+                            f"Command {self.name} does not accept any arguments"
+                        )
+                    )
                 else:
-                    return Result(True, self.process_value())
+                    return Success([])
             case nargs:
                 user_input = re.split(r"\s+", user_input, flags=re.M)
                 is_empty = len(user_input) == 0
 
                 match nargs:
                     case "*":
-                        return Result(True, self.process_value(user_input))
+                        return self.process(user_input)
 
                     case "?":
                         if len(user_input) > 1:
-                            return Result(
-                                False,
-                                TooManyArgumentsError,
-                                f"expected 0 or 1 argument, got {len(user_input)}",
+                            return Failure(
+                                TooManyArgumentsError(
+                                    f"Expected 0 or 1 argument, got {len(user_input)}"
+                                )
                             )
                         else:
-                            return Result(True, user_input)
+                            return self.process(user_input)
                     case "+":
                         if is_empty:
-                            return Result(
-                                False,
-                                NotEnoughArgumentsError,
-                                "expected at least 1 argument",
+                            return Failure(
+                                NotEnoughArgumentsError("Expected at least 1 argument"),
                             )
                         else:
-                            return Result(True, self.process_value(user_input))
+                            return self.process(user_input)
                     case n if type(nargs) is int:
                         if len(user_input) != n:
-                            return Result(
-                                False,
-                                NotEnoughArgumentsError,
-                                f"expected {nargs} arguments, got {n}",
+                            return Failure(
+                                NotEnoughArgumentsError(
+                                    f"expected {nargs} arguments, got {n}"
+                                ),
                             )
                         else:
-                            return Result(True, self.process_value(user_input))
+                            return self.process(user_input)
                     case _:
                         raise NotImplementedError(user_input)
 
@@ -285,16 +338,14 @@ class Menu:
         res = list(filter(pattern.search, items))
 
         if len(res) == 0:
-            return Result(
-                False,
-                NoChoicesMatchedError,
-                f"pattern `{pattern}` did not match any items",
+            return Failure(
+                NoChoicesMatchedError(f"pattern `{pattern}` did not match any items"),
             )
 
         self.items = res
         self.history.append(current)
 
-        return Result(True, res)
+        return Success(res)
 
     def clear_filter(self) -> None:
         if len(self.history) == 0:
@@ -310,21 +361,23 @@ class Menu:
 
         commands[-1].print_help()
 
-    def fzf(self, pattern: str | re.Pattern | None = None) -> Result:
+    def fzf(
+        self, pattern: str | re.Pattern | None = None
+    ) -> Success[T] | Failure[NoChoicesMatchedError]:
         items = self.items
         if pattern:
             items = [x for x in items if re.search(pattern, x, flags=re.M + re.I)]
 
         if len(items) == 0:
-            return Result(False, NoChoicesMatchedError, "nothing selected")
+            return Failure(NoChoicesMatchedError("Nothing selected"))
 
         prompt = FzfPrompt().prompt
         selected = prompt(items, "--multi")
 
         if len(selected) == 0:
-            return Result(False, NoChoicesMatchedError, "nothing selected")
+            return Failure(NoChoicesMatchedError("Nothing selected"))
         else:
-            return Result(True, selected)
+            return Success(selected)
 
     def print(self) -> None:
         items = self.items
@@ -334,23 +387,23 @@ class Menu:
             cprint(f"{i + 1:<{key_width}} |", color="yellow", end=" ")
             cprint(str(x), color="yellow")
 
-    def select(self, *index: str | int) -> Result:
+    def select(self, *index: str | int) -> Success | Failure:
         choices = [x.strip() for x in index]
         choices = [x for x in choices if len(x) > 0]
         n = list(range(1, len(self.items) + 1))
 
         if len(choices) == 0:
-            return Result(False, NotEnoughArgumentsError, "no choices provided")
+            return Failure(NotEnoughArgumentsError("no choices provided"))
 
         selected = set()
         for choice in choices:
             match parse_range(n, choice):
-                case Result(ok=False) as res:
-                    return res
-                case Result(ok=True, value=indices):
+                case Failure() as failure:
+                    return failure
+                case Success(indices):
                     selected.update(set(indices))
 
-        return Result(True, list(selected))
+        return Success(list(selected))
 
     def on(
         self,
@@ -372,7 +425,7 @@ class Menu:
         for alias in command.aliases:
             self.command_aliases[alias] = command
 
-    def input(self) -> Result:
+    def input(self) -> Success[str] | Failure[EOFError]:
         inp = ""
 
         try:
@@ -386,7 +439,7 @@ class Menu:
             should_quit = input()
 
             if "y" in should_quit:
-                return Result(False, error)
+                return Failure(error)
             else:
                 return self.input()
 
@@ -401,9 +454,9 @@ class Menu:
             cprint("Pass 'help' to display help", "blue")
             return self.input()
         elif len(cmd) == 1:
-            return Result(True, (self.command_aliases[cmd[0]], ''))
+            return Success((self.command_aliases[cmd[0]], ""))
         else:
-            return Result(True, (self.command_aliases[cmd[0]], cmd[1]))
+            return Success((self.command_aliases[cmd[0]], cmd[1]))
 
     def pop_history(self) -> list[str]:
         if len(self.history) == 0:
@@ -421,7 +474,7 @@ class Menu:
             self.print()
 
         res = self.input()
-        if not res.ok:
+        if not isinstance(res, Success):
             return
 
         cmd, args = res.value
@@ -431,8 +484,8 @@ class Menu:
         cmd: MenuCommand
         parsed = cmd.parse(args)
 
-        if parsed.is_error():
-            cprint(parsed.message, "red")
+        if isinstance(parsed, Failure):
+            cprint(error_message(parsed.value), "red")
             return self.cli(items=items, print_items=False)
 
         value = parsed.value
@@ -444,24 +497,24 @@ class Menu:
                 return self.cli(print_items=False)
             case "select":
                 match self.select(*value):
-                    case Result(ok=False, message=message):
-                        cprint(message, "red")
+                    case Failure(error):
+                        cprint(error_message(error), "red")
                     case result:
                         return [self.items[index - 1] for index in result.value]
             case "filter":
                 match self.filter(*value):
-                    case Result(ok=False) as result:
-                        cprint(result.message, "red")
+                    case Failure(error):
+                        cprint(error_message(error), "red")
                         return self.cli(print_items=False)
                     case _:
                         return self.cli(print_items=True)
             case "fzf":
                 match self.fzf(*value):
-                    case Result(ok=False) as result:
-                        cprint(result.message, "red")
+                    case Failure(error):
+                        cprint(error_message(error), "red")
                         return self.cli(print_items=True)
-                    case result:
-                        return result.value
+                    case Success(value):
+                        return value
             case "help":
                 self.print_help()
                 return self.cli(print_items=False)
@@ -470,3 +523,7 @@ class Menu:
                 return self.cli(print_items=True)
             case command:
                 raise NotImplementedError(command)
+
+
+menu = Menu(list(map(str, [1, 2, 3, 4, 5])))
+menu.cli()
