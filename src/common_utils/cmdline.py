@@ -3,15 +3,21 @@ import argparse
 import sys
 import shlex
 
+from collections import defaultdict
 from typing import Callable
 from argparse import ArgumentParser
-
-from src.common_utils.result import Ok, Err, Result
+from src.common_utils.result import Success, Failure, Result
 
 ArgvParsedValue = str | bool | int | float
 ArgvParsedDict = dict[str, ArgvParsedValue | list[ArgvParsedValue]]
-ArgvValidatorCallable = Callable[[ArgvParsedValue], Result]
-ArgvProcessorCallable = Callable[[ArgvParsedValue, ...], any]
+ArgvValidatorCallable = Callable[
+    [ArgvParsedValue],
+    Success[str] | Failure[AssertionError] | AssertionError | ArgvParsedValue,
+]
+ArgvProcessorCallable = Callable[
+    [ArgvParsedValue, ...],
+    Callable[[ArgvParsedValue], Success | Failure[ValueError]],
+]
 
 
 def mkdefault(x, y=None):
@@ -19,6 +25,40 @@ def mkdefault(x, y=None):
         return y
     else:
         return x
+
+
+class ArgvProcessor:
+    def __init__(
+        self,
+        variable: str,
+        f: ArgvProcessorCallable,
+        *args,
+        **kwargs,
+    ) -> None:
+        self.variable = variable
+        self.f = f
+        self.args = args
+        self.kwargs = kwargs
+
+    def process(
+        self, value: ArgvParsedValue
+    ) -> Success[ArgvParsedValue] | Failure[ValueError]:
+        f = self.f
+        value = f(value, *self.args, **self.kwargs)
+
+        match value:
+            case Success() as success:
+                return success
+            case Failure() as failure:
+                return failure
+            case Exception() as error:
+                return Failure(error)
+            case True:
+                return Success(value)
+            case _ if not value:
+                return Failure(AssertionError(f"Validation error: {value}"))
+            case _:
+                return Success(value)
 
 
 class ArgvValidator:
@@ -34,49 +74,44 @@ class ArgvValidator:
         self.args = args
         self.kwargs = kwargs
 
-    def validate(
-        self,
-        value: ArgvParsedValue,
-        pcall: bool = True,
-    ) -> Result:
+    def validate(self, value: ArgvParsedValue) -> Success | Failure[AssertionError]:
         f = self.f
         value = f(value, *self.args, **self.kwargs)
 
-        if type(value) is Result:
-            if not value.ok:
-                msg = ""
-                if value.message:
-                    msg = f"{self.variable}: Validation error: {value.message}"
-                else:
-                    msg = f"{self.variable}: Validation error.\nArgument supplied: {str(value)}"
-                if not pcall:
-                    raise AssertionError(msg)
-                else:
-                    return Result(False, AssertionError, msg)
-            else:
-                return value
-        elif not value:
-            msg = f"{self.variable}: Validation error"
-            return Result(False, AssertionError, msg)
-        else:
-            return Result(True, value)
+        match value:
+            case Success() as success:
+                return success
+            case Failure() as failure:
+                return failure
+            case Exception() as error:
+                return Failure(error)
+            case True:
+                return Success()
+            case _ if not value:
+                return Failure(AssertionError(f"Validation error: {value}"))
+            case result:
+                return Success(result)
 
 
 class Argv(ArgumentParser):
     def __init__(self, prog: str, *args, **kwargs) -> None:
         super().__init__(prog, *args, **kwargs)
 
+        self.options: dict[str, bool] = {'rest': True}
         self.parsed: ArgvParsedDict = {}
-        self.validators: dict[str, ArgvValidator] = {}
-        self.processors: dict[str, ArgvProcessorCallable] = {}
+        self.validators: dict[str, list[ArgvValidator]] = defaultdict(lambda: [])
+        self.processors: dict[str, list[ArgvProcessor]] = defaultdict(lambda: [])
         self.add_argument("rest", nargs="*", help="Rest of the arguments passed")
-        self.rest_args: list[str] | None = []
 
     def on(
         self,
         *option,
         validate: ArgvValidatorCallable | ArgvValidatorCallable | None = None,
+        validate_args: list | None = None,
+        validate_kwargs: dict | None = None,
         process: ArgvProcessorCallable | list[ArgvProcessorCallable] | None = None,
+        process_args: list | None = None,
+        process_kwargs: dict | None = None,
         **kwargs,
     ) -> argparse._StoreAction:
         name: str
@@ -88,18 +123,25 @@ class Argv(ArgumentParser):
         name = re.sub("^-?-?", "", name)
         name = name.replace("-", "_")
 
-        if process:
-            process = [process] if not isinstance(process, (list, tuple)) else process
-            for f in process:
-                self.add_processor(name, f)
-
         if validate:
             validate = (
                 [validate] if not isinstance(validate, (list, tuple)) else validate
             )
-            for v in validate:
-                self.add_validator(name, v)
+            validate_args = [] if not validate_args else validate_args
+            validate_kwargs = {} if not validate_kwargs else validate_kwargs
 
+            for f in validate:
+                self.add_validator(name, f, *validate_args, **validate_kwargs)
+
+        if process:
+            process = [process] if not isinstance(process, (list, tuple)) else process
+            process_args = [] if not process_args else process_args
+            process_kwargs = {} if not process_kwargs else process_kwargs
+
+            for f in process:
+                self.add_processor(name, f, *process_args, **process_kwargs)
+
+        self.options[name] = True
         return self.add_argument(*option, **kwargs)
 
     def __getitem__(self, var: str) -> ArgvParsedValue | None:
@@ -112,14 +154,9 @@ class Argv(ArgumentParser):
         *default_args,
         **default_kwargs,
     ) -> None:
-        def function(value: ArgvParsedValue) -> any:
-            return f(value, *default_args, **default_kwargs)
-
-        exists = self.processors.get(var)
-        if not exists:
-            self.processors[var] = [function]
-        else:
-            self.processors[var].append(function)
+        self.processors[var].append(
+            ArgvProcessor(var, f, *default_args, **default_kwargs)
+        )
 
     def add_validator(
         self,
@@ -128,61 +165,46 @@ class Argv(ArgumentParser):
         *default_args,
         **default_kwargs,
     ) -> ArgvProcessorCallable:
-        exists = self.validators.get(var)
-        f = ArgvValidator(var, f, *default_args, **default_kwargs)
+        self.validators[var].append(
+            ArgvValidator(var, f, *default_args, **default_kwargs)
+        )
 
-        if not exists:
-            self.validators[var] = [f]
-        else:
-            self.validators[var].append(f)
-
-        return f
-
-    def validate_parsed_args(
+    def validate(
         self,
         parsed: ArgvParsedDict | None = None,
         pcall: bool = False,
-    ) -> tuple[ArgvParsedDict, ArgvParsedDict]:
+    ) -> Success[ArgvParsedDict] | Failure[AssertionError]:
         parsed = parsed is None and self.parsed or parsed
         assert parsed is not None, (
             "No arguments were parsed. Have you run <obj>.parse(...)"
         )
 
         parsed: ArgvParsedDict
-        failed = {}
-        items = parsed.copy()
-
-        def validate_arg(v, arg) -> Result:
-            result = v.validate(arg, pcall=pcall)
-            if pcall:
-                if not result.ok:
-                    return result
-                else:
-                    result.errorf()
-            elif not result.ok:
-                result.errorf()
-            else:
-                return result
+        new: ArgvParsedDict = {}
 
         for k, value in parsed.items():
             if validators := self.validators.get(k):
-                result = validate_arg(validators[0], value)
+                for validator in validators:
+                    match validator.validate(value):
+                        case Success(str(v)):
+                            new[k] = v
+                        case Success():
+                            new[k] = value 
+                        case Failure() as failure:
+                            if not pcall:
+                                failure.unwrap()
+                            else:
+                                return failure
+            else:
+                new[k] = value
 
-                for validator in validators[1:]:
-                    result = validator.validate(result.value, pcall=pcall)
-                    if not result.ok and pcall:
-                        failed[k] = value
-                        items.pop(k)
-                    elif not result.ok:
-                        result.errorf()
+        return Success(new)
 
-                    breakpoint()
-
-        return (items, failed)
-
-    def process_parsed_args(
-        self, parsed: ArgvParsedDict | None = None
-    ) -> ArgvParsedDict:
+    def process(
+        self,
+        parsed: ArgvParsedDict | None = None,
+        pcall: bool = False,
+    ) -> Success[ArgvParsedDict] | Failure[AssertionError]:
         parsed = parsed is None and self.parsed or parsed
         assert parsed is not None, (
             "No arguments were parsed. Have you run <obj>.parse(...)"
@@ -190,74 +212,91 @@ class Argv(ArgumentParser):
 
         new: ArgvParsedDict = {}
         for k, v in parsed.items():
-            if f := self.processors.get(k):
-                new[k] = f(v)
+            if fs := self.processors.get(k):
+                for f in fs:
+                    match f.process(v):
+                        case Success(value) if type(value) is not bool:
+                            new[k] = value
+                        case Success(value) if value:
+                            new[k] = v
+                        case Failure() as failure:
+                            if not pcall:
+                                failure.unwrap()
+                            else:
+                                return failure
             else:
                 new[k] = v
 
-        return new
+        return Success(new)
 
     def parse(
         self,
         args: str | list[str] | None = None,
         pcall: bool = True,
-        on_failure: Callable[[Exception, list[str]], any] = lambda error, args: (
-            error,
-            args,
-        ),
-    ) -> Result:
-        if args:
-            args = isinstance(args, str) and shlex.split(args) or args
-            try:
-                # this will print the error message anyway
+        unwrap: bool = True,
+    ) -> Success[ArgvParsedDict] | Failure[AssertionError] | ArgvParsedDict:
+        parsed = None
+
+        try:
+            # Parsing known_args will print the error message anyway. That is what we need
+            if args:
+                args = isinstance(args, str) and shlex.split(args) or args
                 parsed, _ = self.parse_known_args(args)
-                parsed = parsed.__dict__
-                parsed, _ = self.validate_parsed_args(parsed, pcall=pcall)
-                parsed = self.process_parsed_args(parsed)
-                self.parsed = parsed
-
-                return Result(True, parsed)
-            except SystemExit as error:
-                if not pcall:
-                    raise error
-                else:
-                    return Result(False, error, error.args[0])
-            except Exception as error:
-                if not pcall:
-                    raise error
-                else:
-                    return Result(False, error, error.args[0])
-        else:
-            try:
-                # this will print the error message anyway
+            else:
                 parsed, _ = self.parse_known_args()
-                parsed = parsed.__dict__
-                parsed, _ = self.validate_parsed_args(parsed, pcall=pcall)
-                parsed = self.process_parsed_args(parsed)
-                self.parsed = parsed
 
-                return Result(True, parsed)
-            except SystemExit as error:
-                if not pcall:
-                    raise error
-                else:
-                    return Result(False, error, error.args[0])
-            except Exception as error:
-                if not pcall:
-                    raise error
-                else:
-                    return Result(False, error, error.args[0])
+            _parsed = {}
+            for k in self.options.keys():
+                _parsed[k] = getattr(parsed, k)
 
-            return Result(True, self.parsed)
+            parsed = _parsed
+            match self.validate(parsed, pcall=pcall):
+                case Success(new):
+                    parsed = new
+                case Failure() as failure:
+                    if not pcall:
+                        failure.unwrap()
+                    else:
+                        return failure
 
+            match self.process(parsed, pcall=pcall):
+                case Success(new):
+                    parsed = new
+                case Failure() as failure:
+                    if not pcall:
+                        failure.unwrap()
+                    else:
+                        return failure
 
-parser = Argv("Some CLI application")
-parser.on(
-    "-i",
-    "--input-file",
-    validate=[
-        lambda x: Result(True, x),
-        lambda x: Result(False, None, "Laude madarchod"),
-    ],
-    nargs=1,
-)
+            self.parsed = parsed
+            if unwrap:
+                return self.parsed
+            else:
+                return Success(self.parsed)
+        except SystemExit as error:
+            if not pcall:
+                raise error
+            else:
+                return Failure(error)
+        except Exception as error:
+            if not pcall:
+                raise error
+            else:
+                return Failure(error)
+#
+#
+# parser = Argv("Some CLI application")
+# parser.on(
+#     "-i",
+#     "--input-file",
+#     validate=lambda x: Success(True),
+#     process=lambda x: int(x) + 1,
+#     nargs='?',
+# )
+# parser.on(
+#     '-f',
+#     '--flag',
+#     action='store_true'
+# )
+# parser.parse(["a", "b", 'c', '-i', '1', '-f'])
+# parser.print_help()

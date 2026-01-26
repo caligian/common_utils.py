@@ -19,8 +19,9 @@ class Failure(Generic[Error]):
 
     def __init__(self, error: Exception) -> None:
         assert isinstance(error, Exception)
+        super().__init__()
         self.error = error
-        super().__init__(error)
+        self.args = (self.error,)
 
     def throw(self) -> None:
         raise self.error
@@ -39,8 +40,7 @@ class Success(Generic[T]):
         self.value = value
         self.apply: list[Callable] = []
 
-    def unwrap(self, pcall: bool = False) -> Failure | Self:
-        cls = type(self)
+    def unwrap(self, pcall: bool = False) -> any:
         value = self.value
 
         for f in self.apply:
@@ -49,7 +49,7 @@ class Success(Generic[T]):
                 value = Failure(value)
                 return value.unwrap(pcall=pcall)
 
-        return cls(value)
+        return value
 
     def unwrap_and(self, f: Callable, *args, **kwargs) -> Failure | Self:
         cls = type(self)
@@ -67,11 +67,20 @@ class Success(Generic[T]):
 def safe(f: Callable) -> Callable[[...], Success | Failure]:
     def function(*args, **kwargs) -> any:
         try:
-            return Success(f(*args, **kwargs))
+            ok = f(*args, **kwargs)
+            t_ok = type(ok)
+
+            if (t_ok is Success) or (t_ok is Failure):
+                return ok
+            elif isinstance(ok, Exception):
+                return Failure(ok)
+            else:
+                return Success(ok)
         except Exception as error:
             return Failure(error)
 
     return function
 
 
-__all__ = ["Success", "Failure", "UnwrapError", "safe"]
+Result = Failure | Success
+__all__ = ["Success", "Failure", "UnwrapError", "safe", "Result"]

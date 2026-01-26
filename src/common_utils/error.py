@@ -189,6 +189,7 @@ __all__ = [
     # Make error type
     "make_error",
     "make_exception",
+    #
     # Raise errors
     "raise_when",
     "raise_unless",

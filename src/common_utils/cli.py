@@ -6,9 +6,9 @@ import shlex
 from prompt_toolkit.validation import Validator
 from typing import Self, Callable
 
-from src.common_utils.cmdline import Argv
+from src.common_utils.cmdline import Argv, ArgvParsedDict
 from src.common_utils.prompt import Prompt
-from src.common_utils.result import Result
+from src.common_utils.result import Result, Success, Failure
 
 
 class CLINoSuchCommandError(Exception):
@@ -57,8 +57,10 @@ class CLICommand:
         command = [command] if type(command) is str else command
         return self.get(*command)
 
-    def parse(self, args: list[str]) -> argparse.Namespace | SystemExit:
-        return self.parser.parse(args, pcall=True)
+    def parse(
+        self, args: list[str]
+    ) -> Success[ArgvParsedDict] | Failure[AssertionError]:
+        return self.parser.parse(args, pcall=True, unwrap=False)
 
     def add(self, *command: str) -> Self:
         return self.get(*command, create=True)
@@ -97,11 +99,11 @@ class CLIParser:
         return [x.lstrip().rstrip() for x in args]
 
     def get_command_from_args(
-        self,
-        args: list[str],
-        prefix: str = "",
-        parse: bool = False,
-    ) -> tuple[CLICommand, list[str]] | None:
+        self, args: list[str], prefix: str = ""
+    ) -> (
+        Success[tuple[CLICommand, list[str]]]
+        | Failure[CLINoSuchCommandError, CLIInvalidArgumentsError | AssertionError]
+    ):
         till_non_word = -1
         for i, x in enumerate(args):
             if not re.search(r"[a-z_]", x[0]):
@@ -114,24 +116,15 @@ class CLIParser:
         command = self.commands.get(first)
 
         if command is None:
+            error = ""
             if prefix:
-                return Result(
-                    False,
-                    CLINoSuchCommandError,
-                    f"No such command: {first}",
-                )
+                error = CLINoSuchCommandError(f"{prefix}: No such command: {first}")
             else:
-                return Result(
-                    False,
-                    CLINoSuchCommandError,
-                    f"{prefix}: No such command {first}",
-                )
+                error = CLINoSuchCommandError(f"No such command: {first}")
+            return Failure(error)
 
         if len(before_non_word) == 0:
-            if parse:
-                return self
-            else:
-                return command.parse(after_non_word)
+            return Success((command, []))
 
         subcommand = None
         subcommand_index = -1
@@ -148,11 +141,11 @@ class CLIParser:
             pass
 
         if subcommand_index == -1:
-            return command.parse(after_non_word)
+            return Success((command, after_non_word))
         else:
             args = before_non_word[subcommand_index:]
             args += after_non_word
-            return subcommand.parse(args)
+            return Success((subcommand, args))
 
     def get(self, *command: str) -> CLICommand | None:
         first = command[0]
@@ -199,9 +192,3 @@ class CLIParser:
             args = shlex.split(args)
 
         assert len(args) > 0, "Empty input"
-
-
-cli = CLIParser()
-cli.add_command("kaushik", "krunal", "brishti")
-res = cli.get_command_from_args(["kaushik", "krunal", "-i", "1", "2"])
-print(res.value)

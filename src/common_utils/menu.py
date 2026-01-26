@@ -5,12 +5,120 @@ from typing import Callable
 from dataclasses import dataclass, field
 from termcolor import cprint
 from pyfzf import FzfPrompt
-from src.common_utils.result import Success, Failure, T
+from src.common_utils.result import Success, Failure, T, safe
 from src.common_utils.error import error_message
 
 
-MenuCommandApplyFunction = Callable[[str], Success[T] | Failure[ValueError]]
-MenuCommandCondFunction = Callable[[str], bool | Failure[ValueError]]
+MenuIndex = list[int]
+MenuInput = list[str] | str
+MenuCommandCondition = Callable[
+    [str], str | bool | ValueError | Success[str | bool] | Failure[ValueError]
+]
+MenuCommandMapper = Callable[[any], Success[str] | Failure[ValueError] | str | list[str]]
+
+
+class Utils:
+    @staticmethod
+    def condition(**default_kwargs) -> Callable:
+        def decorator(f: Callable) -> Callable[[any], bool | ValueError]:
+            def function(*args, **kwargs) -> bool | ValueError:
+                nonlocal default_kwargs
+                default_kwargs = default_kwargs.copy()
+                default_kwargs.update(kwargs)
+                kwargs = default_kwargs
+                ok = f(*args, **kwargs)
+                t_ok = type(ok)
+                is_bool = t_ok is bool
+                is_err = t_ok is ValueError
+                is_not_ok = (is_bool and not ok) or (not ok) or is_err
+
+                if is_err:
+                    return ok
+                elif is_not_ok:
+                    return ValueError(f"Assertion error. Function provided: {f}")
+                elif ok:
+                    return True
+
+            return function
+
+        return decorator
+
+    @staticmethod
+    def apply(**default_kwargs) -> Callable:
+        def decorator(f: Callable) -> Callable[[any], Success | Failure]:
+            def function(*args, **kwargs) -> bool | ValueError:
+                nonlocal default_kwargs
+                nonlocal f
+
+                default_kwargs = default_kwargs.copy()
+                default_kwargs.update(kwargs)
+                kwargs = default_kwargs
+                f = safe(f)
+                ok = f(*args, **kwargs)
+
+                match ok:
+                    case Failure() as failure:
+                        return failure
+                    case Success() as success:
+                        return success
+
+            return function
+
+        return decorator
+
+
+class Condition:
+    @staticmethod
+    def index(s: str | list[str]) -> bool:
+        s = [s] if type(s) is str else s
+        for string in s:
+            if (
+                re.search(r"^[1-9\^ -]+$", string) and re.search("[1-9]", string)
+            ) is not None:
+                pass
+            else:
+                return ValueError(
+                    f"Invalid index `{string}`. Valid syntax: ^?[1-9]+-?[1-9]*"
+                )
+
+        return True
+
+    @staticmethod
+    def non_empty(s: str) -> bool | ValueError:
+        if len(s) == 0:
+            return ValueError("Input is empty")
+        else:
+            return True
+
+    @staticmethod
+    def natural_number(s: str | list[str]) -> bool | ValueError:
+        for string in s:
+            ok = re.search(r"^[0-9]+$", string)
+            if ok:
+                pass
+            else:
+                return ValueError(f"{string} is not a natural number")
+
+        return True
+
+    @staticmethod
+    def integer(s: str | list[int]) -> bool | ValueError:
+        for string in s:
+            ok = re.search(r"^-?[0-9]+$", string)
+            if ok:
+                pass
+            else:
+                return ValueError(f"{string} is not an integer")
+        return True
+
+
+class Map:
+    @staticmethod
+    def strip(s: str | list[str]) -> Success[str | list[str]]:
+        if type(s) is str:
+            return Success(s.strip())
+        else:
+            return Success([x.strip() for x in s])
 
 
 class InvalidCommandError(Exception):
@@ -75,14 +183,14 @@ def parse_range(
             inp = [int(x) for x in inp]
         except ValueError:
             error = InvalidArgumentError(
-                f"expected {{start_index}}-{{end_index}}, got {inp_}"
+                f"Expected {{start_index}}-{{end_index}} OR {{index}} OR ^{{index}} OR ^{{start_index}}-{{end_index}} where index are natural numbers, got {inp_}"
             )
             return Failure(error)
         start, end = inp
         start, end = int(inp[0]), int(inp[1])
 
         if start == 0 or end == 0:
-            return Failure(InvalidArgumentError("menu items are not zero-indexed"))
+            return Failure(InvalidArgumentError("Menu items are not zero-indexed"))
 
         start = n + start if start < 0 else start
         end = n + end if end < 0 else end
@@ -90,7 +198,7 @@ def parse_range(
         if start >= end:
             return Failure(
                 InvalidArgumentError(
-                    f"expected {{start_index}} < {{end_index}}, got start={start}, end={end}"
+                    f"Expected {{start_index}} < {{end_index}}, got start={start}, end={end}"
                 )
             )
 
@@ -101,12 +209,11 @@ def parse_range(
             if index[0] == 0:
                 return Failure(
                     InvalidArgumentError(
-                        "menu items are not zero index while selection"
+                        "Menu items are not zero indexed while selection"
                     )
                 )
-
         except ValueError:
-            return Failure(InvalidArgumentError(f"expected an integer, got {inp}"))
+            return Failure(InvalidArgumentError(f"Expected an integer, got {inp}"))
 
     if exclude:
         return Success(list(filter(lambda x: x not in index, n)))
@@ -120,21 +227,21 @@ class MenuCommand:
     desc: str
     nargs: str | int = field(default=1)
     aliases: list[str] | None = field(default=None)
-    cond: list[MenuCommandApplyFunction] | MenuCommandApplyFunction = field(
-        default_factory=lambda: [lambda s=None: True]
+    cond: list[MenuCommandCondition] | MenuCommandCondition = field(
+        default_factory=lambda: []
     )
-    apply: list[MenuCommandCondFunction] | MenuCommandCondFunction = field(
-        default_factory=lambda: [lambda s: Success(s)]
+    apply: list[MenuCommandMapper] | MenuCommandMapper = field(
+        default_factory=lambda: []
     )
 
     def __post_init__(self) -> None:
         assert (self.nargs in ["+", "*", "?"]) or (type(self.nargs) is int)
         self.help: str = self.make_help()
 
-        if isinstance(self.cond, list):
+        if not isinstance(self.cond, list):
             self.cond = [self.cond]
 
-        if isinstance(self.apply, list):
+        if not isinstance(self.apply, list):
             self.apply = [self.apply]
 
     def make_help(self) -> str:
@@ -158,25 +265,52 @@ class MenuCommand:
 
         return ("").join(res)
 
-    def print_help(self) -> None:
-        print(self.help)
+    def print_help(self, print_nl: bool = True) -> None:
+        cprint(self.name + ' ', 'red', end='')
+        match self.nargs:
+            case "+":
+                cprint("{arg1} [arg2] [arg3] ...", 'green')
+            case "*":
+                cprint("[arg1] [arg2] [arg3] ...", 'green')
+            case "?":
+                cprint("[arg1]", 'green')
+            case 0:
+                cprint("")
+            case 1:
+                cprint("{arg1}", 'green')
+            case _:
+                cprint("{arg1}...{arg" + str(self.nargs) + "}", 'green')
+
+        cprint(self.desc, 'white')
+        if print_nl:
+            print()
+
 
     def check(self, x: str | list[str] | None) -> bool | Failure[ValueError]:
         if x is None:
             return Success(x)
 
         x = Success(x)
-        for f in self.apply:
+        for f in self.cond:
+            res = f(x.value)
             try:
-                match f(x.value):
-                    case Failure() as failure:
+                match res:
+                    case ValueError() as error:
+                        return Failure(error)
+                    case Failure(error) as failure:
                         return failure
-                    case Success(value):
-                        x = value
-                    case value:
-                        x = value
+                    case Success(value) as success:
+                        res = success
+                    case str(value):
+                        res = Success(value)
+                    case True:
+                        res = Success(x)
+                    case failure:
+                        raise ValueError(f"Invalid return value: {failure}")
             except ValueError as error:
                 return Failure(error)
+
+        return x
 
     def process(
         self, x: str | list[str] | None = None
@@ -184,8 +318,8 @@ class MenuCommand:
         match self.check(x):
             case Failure() as failure:
                 return failure
-            case _:
-                pass
+            case Success(str(value)):
+                x = value
 
         if x is None:
             return Success(x)
@@ -198,8 +332,10 @@ class MenuCommand:
                         x = success
                     case Failure() as failure:
                         return failure
+                    case value if value:
+                        x = Success(value)
                     case value:
-                        x = value
+                        raise ValueError(f"Invalid return value: {value}")
             except ValueError as error:
                 return Failure(error)
 
@@ -239,7 +375,6 @@ class MenuCommand:
                 match nargs:
                     case "*":
                         return self.process(user_input)
-
                     case "?":
                         if len(user_input) > 1:
                             return Failure(
@@ -282,7 +417,7 @@ class Menu:
             "filter",
             "Filter items by regular expressions",
             aliases=["/", "f"],
-            cond=lambda s: len(s) != 0,
+            cond=Condition.non_empty,
             nargs=1,
         )
         self.on(
@@ -295,15 +430,14 @@ class Menu:
             "select",
             "Select items by index.\nPrefix index with `^` in order to exclude that index or range of index. Ranges are considered to be end-inclusive\nExample:\n\t^1-9: Exclude indices from 1 till 10\n\t1-9: Select indices from 1 till 10\n\t1 Select the first item\n\t^2: Exclude the second item",
             aliases=["s"],
-            cond=lambda s: re.search(r"^[0-9\^ ]+$", s) and re.search("[0-9]", s),
-            process=lambda s: list(map(lambda x: x.lstrip().rstrip(), s)),
+            cond=Condition.index,
             nargs="+",
         )
         self.on(
             "filter",
             "Filter items by regular expressions",
             aliases=["/", "f"],
-            cond=lambda s: len(s) != 0,
+            cond=Condition.non_empty,
             nargs=1,
         )
         self.on(
@@ -357,9 +491,8 @@ class Menu:
         commands = list(self.commands.values())
         for command in commands[:-1]:
             command.print_help()
-            print()
 
-        commands[-1].print_help()
+        commands[-1].print_help(print_nl=False)
 
     def fzf(
         self, pattern: str | re.Pattern | None = None
@@ -523,7 +656,3 @@ class Menu:
                 return self.cli(print_items=True)
             case command:
                 raise NotImplementedError(command)
-
-
-menu = Menu(list(map(str, [1, 2, 3, 4, 5])))
-menu.cli()
