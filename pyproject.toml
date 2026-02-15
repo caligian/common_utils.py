@@ -6,7 +6,7 @@ description = 'Common utility functions that might be useful'
 readme = 'README.md'
 requires-python = ">= 3.11"
 license = "MIT"
-dependencies = ["pyfzf", "termcolor"]
+dependencies = ["pyfzf", "termcolor", 'prompt_toolkit', 'sspipe']
 
 [project.urls]
 "Homepage" = "https://github.com/caligian/common_utils.py"

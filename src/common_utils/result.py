@@ -1,86 +1,129 @@
+from dataclasses import dataclass
 from typing import Self, Callable, Generic, TypeVar
 from src.common_utils.error import is_error_instance
+from functools import partial
 
 T = TypeVar("T")
 Error = TypeVar("Error", bound=Exception)
 
 
+@dataclass
 class UnwrapError(Exception):
-    def __init__(self, error: Exception) -> None:
-        self.error = error
-        super().__init__(error)
-
-    def throw(self) -> None:
-        raise self.error
-
-
-class Failure(Generic[Error]):
-    __match_args__ = ("error",)
-
-    def __init__(self, error: Exception) -> None:
-        assert isinstance(error, Exception)
-        super().__init__()
-        self.error = error
-        self.args = (self.error,)
-
-    def throw(self) -> None:
-        raise self.error
-
-    def unwrap(self, pcall: bool = False) -> Self | UnwrapError:
-        if pcall:
-            return UnwrapError(self.error)
-        else:
-            raise self.error
-
-
-class Success(Generic[T]):
     __match_args__ = ("value",)
 
-    def __init__(self, value: T) -> None:
+    def __init__(self, value: Exception) -> None:
         self.value = value
-        self.apply: list[Callable] = []
+        super().__init__(value)
 
-    def unwrap(self, pcall: bool = False) -> any:
-        value = self.value
+    def throw(self) -> None:
+        raise self
 
-        for f in self.apply:
+    def unwrap(self, pcall: bool = False) -> None:
+        if not pcall:
+            self.throw()
+        else:
+            return self.value
+
+
+class Result(Generic[T]):
+    __match_args__ = ("value", 'metadata')
+
+    def __init__(self, value: T, metadata: dict[str, any] | None = None) -> None:
+        self.value = value
+        self.metadata: dict[str, any] = {} if not metadata else metadata
+
+    def __getitem__(self, metadata_key: str) -> None | any:
+        return self.metadata.get(metadata_key)
+
+    def ok(self) -> bool:
+        return not isinstance(self.value, Exception)
+
+    def not_ok(self) -> bool:
+        return not self.ok()
+
+    def throw(self, pcall: bool = False, value: T | None = None) -> None:
+        value = self.value if value is None else value
+        not_ok = self.not_ok()
+
+        if pcall and not_ok:
+            raise UnwrapError(value)
+        elif not_ok:
+            return UnwrapError(value)
+
+    def check(self, f: Callable, value: T) -> tuple[bool, T]:
+        try:
             value = f(value)
             if is_error_instance(value):
-                value = Failure(value)
-                return value.unwrap(pcall=pcall)
+                return (False, UnwrapError(value))
+            else:
+                return (True, value)
+        except Exception as error:
+            return (False, UnwrapError(error))
 
-        return value
-
-    def unwrap_and(self, f: Callable, *args, **kwargs) -> Failure | Self:
-        cls = type(self)
-        res = f(self.value, *args, **kwargs)
-
-        if is_error_instance(res):
-            return Failure(res)
+    def unwrap(self, pcall: bool = False) -> any:
+        if self.not_ok():
+            return self.throw(pcall=pcall)
         else:
-            return cls(res)
+            return self.value
+
+    def unwrap_or(self, f: Callable, or_else: Callable = lambda x: x) -> T | Error:
+        if not self.not_ok():
+            return f(UnwrapError(self.value))
+        else:
+            return or_else(self.value)
+
+    def unwrap_and(self, f: Callable, or_else: Callable = lambda x: x) -> T | Error:
+        if self.ok():
+            return f(self.value)
+        else:
+            return or_else(UnwrapError(self.value))
+
+    def when(self, when: Callable, unless: Callable) -> T | Error:
+        return self.unwrap_and(when, unless)
+
+    def unless(self, unless: Callable, when: Callable) -> T | Error:
+        return self.when(when, unless)
 
     def bind(self, f: Callable) -> None:
         self.apply.append(f)
 
 
+class Failure(Result[Error]):
+    __match_args__ = ("value", "metadata")
+
+    def __init__(self, value: Error, metadata: dict[str, any] | None = None) -> None:
+        assert isinstance(value, Exception)
+        super().__init__(value, metadata)
+
+
+class Success(Result[T]):
+    __match_args__ = ("value", "metadata")
+
+    def __init__(self, value: T, metadata: dict[str, any] | None = None) -> None:
+        assert not isinstance(value, Exception)
+        super().__init__(value, metadata)
+
+
 def safe(f: Callable) -> Callable[[...], Success | Failure]:
     def function(*args, **kwargs) -> any:
         try:
-            ok = f(*args, **kwargs)
-            t_ok = type(ok)
+            result = f(*args, **kwargs)
+            t_result = isinstance(result, Result)
 
-            if (t_ok is Success) or (t_ok is Failure):
-                return ok
-            elif isinstance(ok, Exception):
-                return Failure(ok)
+            if t_result:
+                return result
+            elif isinstance(result, UnwrapError):
+                return Failure(result.value)
+            elif isinstance(result, Exception):
+                return Failure(result)
             else:
-                return Success(ok)
+                return Success(result)
+        except UnwrapError as error:
+            return Failure(error.value)
         except Exception as error:
             return Failure(error)
 
     return function
 
 
-Result = Failure | Success
 __all__ = ["Success", "Failure", "UnwrapError", "safe", "Result"]

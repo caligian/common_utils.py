@@ -1,12 +1,14 @@
 import re
 
 from sspipe import p, px
-from typing import Callable
+from typing import Callable, Self
+from functools import partial
 from dataclasses import dataclass, field
 from termcolor import cprint
 from pyfzf import FzfPrompt
 from src.common_utils.result import Success, Failure, T, safe
 from src.common_utils.error import error_message
+from src.common_utils.prompt import Prompt
 
 
 MenuIndex = list[int]
@@ -14,7 +16,9 @@ MenuInput = list[str] | str
 MenuCommandCondition = Callable[
     [str], str | bool | ValueError | Success[str | bool] | Failure[ValueError]
 ]
-MenuCommandMapper = Callable[[any], Success[str] | Failure[ValueError] | str | list[str]]
+MenuCommandMapper = Callable[
+    [any], Success[str] | Failure[ValueError] | str | list[str]
+]
 
 
 class Utils:
@@ -54,13 +58,8 @@ class Utils:
                 default_kwargs.update(kwargs)
                 kwargs = default_kwargs
                 f = safe(f)
-                ok = f(*args, **kwargs)
 
-                match ok:
-                    case Failure() as failure:
-                        return failure
-                    case Success() as success:
-                        return success
+                return f(*args, **kwargs)
 
             return function
 
@@ -70,10 +69,18 @@ class Utils:
 class Condition:
     @staticmethod
     def index(s: str | list[str]) -> bool:
-        s = [s] if type(s) is str else s
+        s = re.split(r'\s+', s) if type(s) is str else s
+        s = [x for x in s if len(x) > 0]
+
         for string in s:
-            if (
-                re.search(r"^[1-9\^ -]+$", string) and re.search("[1-9]", string)
+            exclude = string[0] == '^'
+            string = string[1:] if exclude else string
+
+            if string[0] == 0:
+                return ValueError('Selection is 1-based, not 0-based')
+            elif (
+                re.search("^[0-9]+-[0-9]+$", string) or\
+                re.search("^[0-9]+$", string)
             ) is not None:
                 pass
             else:
@@ -266,25 +273,24 @@ class MenuCommand:
         return ("").join(res)
 
     def print_help(self, print_nl: bool = True) -> None:
-        cprint(self.name + ' ', 'red', end='')
+        cprint(self.name + " ", "red", end="")
         match self.nargs:
             case "+":
-                cprint("{arg1} [arg2] [arg3] ...", 'green')
+                cprint("{arg1} [arg2] [arg3] ...", "green")
             case "*":
-                cprint("[arg1] [arg2] [arg3] ...", 'green')
+                cprint("[arg1] [arg2] [arg3] ...", "green")
             case "?":
-                cprint("[arg1]", 'green')
+                cprint("[arg1]", "green")
             case 0:
                 cprint("")
             case 1:
-                cprint("{arg1}", 'green')
+                cprint("{arg1}", "green")
             case _:
-                cprint("{arg1}...{arg" + str(self.nargs) + "}", 'green')
+                cprint("{arg1}...{arg" + str(self.nargs) + "}", "green")
 
-        cprint(self.desc, 'white')
+        cprint(self.desc, "white")
         if print_nl:
             print()
-
 
     def check(self, x: str | list[str] | None) -> bool | Failure[ValueError]:
         if x is None:
@@ -405,13 +411,20 @@ class MenuCommand:
 
 
 class Menu:
-    def __init__(self, items: list[str]) -> None:
+    def __init__(
+        self,
+        items: list[str],
+        prompt_history: str | None = None,
+    ) -> None:
         self.commands: dict[str, MenuCommand] = {}
         self.items: list[str] = items
         self.items_: list[str] = items
         self.max_key_width = max_key_width(items)
         self.command_aliases: dict[str, MenuCommand] = {}
         self.history = []
+        self.prompt = Prompt(prompt_history)
+        self.prompt.init()
+        self.hooks: list[Callable[Menu], Success | Failure | Exception] = []
 
         self.on(
             "filter",
@@ -419,6 +432,12 @@ class Menu:
             aliases=["/", "f"],
             cond=Condition.non_empty,
             nargs=1,
+        )
+        self.on(
+            "history",
+            "Show history or filter history with regex pattern",
+            aliases=["hist", "?"],
+            nargs="?",
         )
         self.on(
             "fzf",
@@ -465,7 +484,7 @@ class Menu:
             nargs=0,
         )
 
-    def filter(self, pattern: str | re.Pattern) -> None:
+    def cmd_filter(self, pattern: str | re.Pattern) -> None:
         items = self.items
         current = items
         pattern = re.compile(pattern, flags=re.I)
@@ -473,7 +492,9 @@ class Menu:
 
         if len(res) == 0:
             return Failure(
-                NoChoicesMatchedError(f"pattern `{pattern}` did not match any items"),
+                NoChoicesMatchedError(
+                    f"pattern `{repr(pattern)}` did not match any items"
+                ),
             )
 
         self.items = res
@@ -494,7 +515,7 @@ class Menu:
 
         commands[-1].print_help(print_nl=False)
 
-    def fzf(
+    def cmd_fzf(
         self, pattern: str | re.Pattern | None = None
     ) -> Success[T] | Failure[NoChoicesMatchedError]:
         items = self.items
@@ -512,7 +533,7 @@ class Menu:
         else:
             return Success(selected)
 
-    def print(self) -> None:
+    def cmd_print(self) -> None:
         items = self.items
         key_width = max_key_width(items)
 
@@ -520,7 +541,7 @@ class Menu:
             cprint(f"{i + 1:<{key_width}} |", color="yellow", end=" ")
             cprint(str(x), color="yellow")
 
-    def select(self, *index: str | int) -> Success | Failure:
+    def cmd_select(self, *index: str | int) -> Success | Failure:
         choices = [x.strip() for x in index]
         choices = [x for x in choices if len(x) > 0]
         n = list(range(1, len(self.items) + 1))
@@ -547,6 +568,7 @@ class Menu:
         cond: Callable[[str], bool] = lambda _: True,
         process: Callable[[str], str] = lambda s=None: s,
     ) -> None:
+        aliases = [] if aliases is None else aliases
         command = (
             name
             if type(name) is MenuCommand
@@ -562,7 +584,7 @@ class Menu:
         inp = ""
 
         try:
-            inp = input("% ")
+            inp = self.prompt.input()
         except KeyboardInterrupt:
             cprint("^C", "red")
             return self.input()
@@ -576,7 +598,9 @@ class Menu:
             else:
                 return self.input()
 
+        inp = "" if not inp else inp
         inp = inp.lstrip().rstrip()
+
         if len(inp) == 0:
             cprint("No input provided", "red")
             return self.input()
@@ -589,6 +613,7 @@ class Menu:
         elif len(cmd) == 1:
             return Success((self.command_aliases[cmd[0]], ""))
         else:
+            print(cmd)
             return Success((self.command_aliases[cmd[0]], cmd[1]))
 
     def pop_history(self) -> list[str]:
@@ -597,14 +622,53 @@ class Menu:
         else:
             return self.history.pop()
 
+    def cmd_help(self, *_) -> Success:
+        self.print_help()
+        return Success(True)
+
+    def cmd_clear(self, *_) -> Success:
+        self.clear_filter()
+        return Success(True)
+
+    def add_hook(self, f: Callable[[Self], any]) -> None:
+        self.hooks.append(partial(f, self))
+
+    def run_hooks(self) -> Success | Failure:
+        for h in self.hooks:
+            try:
+                match h():
+                    case Failure() as failure:
+                        return failure
+                    case Success():
+                        continue
+                    case Exception() as error:
+                        return Failure(error)
+                    case _:
+                        ValueError(
+                            "returned value is not any of Failure | Success | Exception "
+                        )
+            except Exception as error:
+                return Failure(error)
+
+        return Success(True)
+
     def cli(
         self,
         items: list[str] | None = None,
         print_items: bool = True,
     ) -> list[str] | None:
+        match self.run_hooks():
+            case Success() as success:
+                if success['completed']:
+                    return
+                else:
+                    pass
+            case Failure(error):
+                cprint(error_message(error), "red")
+
         items = self.items if self.items == [] else items
         if print_items:
-            self.print()
+            self.cmd_print()
 
         res = self.input()
         if not isinstance(res, Success):
@@ -626,33 +690,80 @@ class Menu:
 
         match cmd.name:
             case "print":
-                self.print()
+                self.cmd_print()
                 return self.cli(print_items=False)
             case "select":
-                match self.select(*value):
+                match self.cmd_select(*value):
                     case Failure(error):
                         cprint(error_message(error), "red")
                     case result:
                         return [self.items[index - 1] for index in result.value]
             case "filter":
-                match self.filter(*value):
+                match self.cmd_filter(*value):
                     case Failure(error):
                         cprint(error_message(error), "red")
                         return self.cli(print_items=False)
                     case _:
                         return self.cli(print_items=True)
             case "fzf":
-                match self.fzf(*value):
+                match self.cmd_fzf(*value):
                     case Failure(error):
                         cprint(error_message(error), "red")
                         return self.cli(print_items=True)
                     case Success(value):
                         return value
             case "help":
-                self.print_help()
+                self.cmd_help()
                 return self.cli(print_items=False)
             case "clear":
-                self.clear_filter()
+                self.cmd_clear()
                 return self.cli(print_items=True)
-            case command:
-                raise NotImplementedError(command)
+            case other:
+                f = getattr(self, f"cmd_{other}")
+                match f(*value):
+                    case Success(value) as success:
+                        if success["completed"]:
+                            return value
+                        else:
+                            return self.cli(print_items=success["print_items"])
+                    case Failure(error) as failure:
+                        cprint(error_message(error), "red")
+                        if failure["completed"]:
+                            return
+                        else:
+                            return self.cli(print_items=failure["print_items"])
+
+
+"""
+items = [chr(i) + ' ' + str(66 - i) for i in range(65, 97)]
+
+
+# Subclass menu instead of adding methods to instances because it is much cleaner
+# Adding methods to instances can lead to weird problems as they are unbound
+class MyMenu(Menu):
+    def cmd_print_value(self, *value):
+        print(type(self))
+        print(value)
+        return Success(True, {"completed": False})
+
+    def cmd_history(self, *value):
+        print(self)
+        print(self.history)
+        return Success(True, {"completed": False})
+
+
+menu = MyMenu(items)
+
+
+@menu.add_hook
+def _(self):
+    print(self.__dict__)
+    return Success(True)
+
+
+# Here you define how the input is parsed on reaching here
+menu.on("print_value", "Print all the values", nargs="+")
+
+# Invoking menu CLI but you can manipulate menu state by directly calling cmd_ functions
+menu.cli()
+"""

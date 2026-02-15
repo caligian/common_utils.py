@@ -7,24 +7,24 @@ import shutil
 import copy
 
 from pickle import (
-    load as pkl_load,
-    dump as pkl_dump,
-    loads as _load_pkl,
-    dumps as _dump_pkl,
+    load as fh_pkl_load,
+    dump as fh_pkl_dump,
+    loads as load_pkl,
+    dumps as dump_pkl,
 )
 from csv import reader as csv_reader, writer as csv_writer
 from termcolor import cprint
-from functools import partial as _partial
+from functools import partial
 from typing import Callable
 from glob import glob
-from collections import namedtuple as nt
+from collections import namedtuple
 from json import (
-    load as json_load,
-    dump as json_dump,
-    loads as _load_json,
-    dumps as _dump_json,
+    load as fh_json_load,
+    dump as fh_json_dump,
+    loads as load_json,
+    dumps as dump_json,
 )
-from functools import reduce as reduce_
+from functools import reduce
 from pyfzf import FzfPrompt
 
 from sspipe import p, px
@@ -85,13 +85,6 @@ pipe = p
 it = px
 deepcopy = copy.deepcopy
 shallowcopy = copy.copy
-load_pkl = _load_pkl
-dump_pkl = _dump_pkl
-load_json = _load_json
-dump_json = _dump_json
-partial = _partial
-namedtuple = nt
-reduce = reduce_
 mkdir = os.makedirs
 is_dir = os.path.isdir
 is_file = os.path.isfile
@@ -1165,6 +1158,7 @@ def strfind(
 
 tbl_map = tbl_apply
 msg_ok = msg_success
+is_path = path_exists
 
 __all__ = [
     # misc stuff
@@ -1195,24 +1189,43 @@ __all__ = [
     "rm",
     "cp",
     "cpstat",
+    ## 
+    ## General purpose file reader
     "slurp",
     "spit",
+    ##
+    ## JSON
+    "fh_json_dump",
+    "fh_json_load",
     "read_json",
     "write_json",
-    "read_pkl",
-    "write_pkl",
-    "read_csv",
-    "write_csv",
-    "load_pkl",
-    "dump_pkl",
     "load_json",
     "dump_json",
-    "mkdir",
+    ##
+    ## Pickle
+    "fh_pkl_load",
+    "fh_pkl_dump",
+    "load_pkl",
+    "dump_pkl",
+    "read_pkl",
+    "write_pkl",
+    ##
+    ## CSV
+    "read_csv",
+    "write_csv",
+    "csv_reader",
+    "csv_writer",
+    ##
+    ## Check filetype
     "is_dir",
     "is_file",
     "is_mount",
     "is_link",
     "is_junction",
+    "is_path",
+    ##
+    ## Misc
+    "mkdir",
     "path_exists",
     "rmtree",
     "file_extension",
