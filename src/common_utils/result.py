@@ -26,7 +26,7 @@ class UnwrapError(Exception):
 
 
 class Result(Generic[T]):
-    __match_args__ = ("value", 'metadata')
+    __match_args__ = ("value", "metadata")
 
     def __init__(self, value: T, metadata: dict[str, any] | None = None) -> None:
         self.value = value
@@ -39,16 +39,17 @@ class Result(Generic[T]):
         return not isinstance(self.value, Exception)
 
     def not_ok(self) -> bool:
-        return not self.ok()
+        return isinstance(self.value, Exception)
 
-    def throw(self, pcall: bool = False, value: T | None = None) -> None:
+    def throw(self, pcall: bool = False, value: T | None = None) -> UnwrapError | None:
         value = self.value if value is None else value
         not_ok = self.not_ok()
 
-        if pcall and not_ok:
-            raise UnwrapError(value)
-        elif not_ok:
-            return UnwrapError(value)
+        if not_ok:
+            if not pcall:
+                raise UnwrapError(value)
+            else:
+                return UnwrapError(value)
 
     def check(self, f: Callable, value: T) -> tuple[bool, T]:
         try:
