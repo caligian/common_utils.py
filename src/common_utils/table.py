@@ -527,13 +527,57 @@ def splitlines(
     return split(s, pattern, **kwargs)
 
 
-def grep(
+def strmatch(
     s: str,
     *pattern: str | Pattern,
+    invert: bool = False,
     **kwargs,
 ) -> re.Match | None:
     for pat in pattern:
-        return re.search(pat, s, **kwargs)
+        if m := re.search(pat, s, **kwargs):
+            if invert:
+                return False
+            else:
+                return m
+
+    if invert:
+        return False
+    else:
+        return True
+
+
+def grep(
+    x: Container,
+    *pattern,
+    invert: bool = False,
+    **kwargs,
+) -> Container:
+    if isinstance(x, dict):
+        res = {}
+        for k, v in x.items():
+            if isinstance(v, str):
+                for p in pattern:
+                    if re.search(p, v, **kwargs) and not invert:
+                        res[k] = v
+
+        return res
+    else:
+        assert isinstance(x, (list, tuple))
+
+        res = []
+        dst_type = type(x)
+
+        for elem in x:
+            if isinstance(elem, str):
+                for p in pattern:
+                    if re.search(p, elem, **kwargs) and not invert:
+                        res.append(elem)
+
+        return dst_type(res)
+
+
+def grepv(x: Container, *pattern, **kwargs) -> Container:
+    return grep(x, *pattern, invert=True, **kwargs)
 
 
 def car(x: Sequence) -> any:
@@ -625,20 +669,8 @@ def sed(
     return s
 
 
-def tbl_grep(
-    tbl: Container,
-    *pattern: str | Pattern,
-    **kwargs,
-) -> dict[any, re.Match] | list[re.Match]:
-    return tbl_keep(tbl, lambda v: grep(str(v), *pattern, **kwargs))
-
-
-def tbl_grepv(
-    tbl: Container,
-    pattern: str | Pattern,
-    **kwargs,
-) -> dict[any, re.Match] | list[re.Match]:
-    return tbl_exclude(tbl, lambda _, v: re.search(pattern, v, **kwargs))
+tbl_grep = grep
+tbl_grepv = grepv
 
 
 def strip(s: str, lhs: bool = True, rhs: bool = True) -> str:
@@ -789,7 +821,7 @@ __all__ = [
     "tmap",
     "tkeep",
     "tgrep",
-    'tgrepv',
+    "tgrepv",
     "unpush",
     "head",
     "tail",
@@ -804,7 +836,7 @@ __all__ = [
     "fzf",
     "agrep",
     "ogrep",
-
+    "strmatch",
     #
     # Other classes
     "Container",

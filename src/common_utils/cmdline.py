@@ -1,6 +1,5 @@
 import re
 import argparse
-import sys
 import shlex
 
 from collections import defaultdict
@@ -142,7 +141,7 @@ class Argv(ArgumentParser):
 
     def on(
         self,
-        *option,
+        *option: str,
         processor: ProcessorSpec | list[ProcessorSpec] | None = None,
         **option_kwargs,
     ) -> StoreAction:
@@ -257,3 +256,5 @@ class Argv(ArgumentParser):
 #     nargs="?",
 # )
 # parser.on("-f", "--flag", action="store_true")
+
+__all__ = ["mkdefault", "Argv"]

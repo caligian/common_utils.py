@@ -35,6 +35,9 @@ class Result(Generic[T]):
     def __getitem__(self, metadata_key: str) -> None | any:
         return self.metadata.get(metadata_key)
 
+    def __setitem__(self, key: str, value: any) -> None:
+        self.metadata[key] = value
+
     def ok(self) -> bool:
         return not isinstance(self.value, Exception)
 
