@@ -2,6 +2,7 @@ import subprocess
 
 from src.common_utils.table import strip
 
+
 def system(
     cmd: list[str] | str,
     capture: bool = True,
@@ -68,6 +69,4 @@ def systemlist(
     )
 
 
-__all__ = [
-    'system', 'systemlist'
-]
+__all__ = ["system", "systemlist"]

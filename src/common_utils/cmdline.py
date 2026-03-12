@@ -54,8 +54,6 @@ class Processor:
 
     def process(self, value: ParsedValue) -> Success[ParsedValue] | Failure[ValueError]:
         f = self.f
-        value = None
-
         try:
             value = f(value, *self.args, **self.kwargs)
         except Exception as error:
@@ -202,6 +200,7 @@ class Argv(ArgumentParser):
         unwrap: bool = False,
     ) -> Success[ParsedDict] | Failure[AssertionError] | ParsedDict:
         parsed = None
+        has_help = ('-h' in args) or ('--help' in args)
 
         try:
             # Parsing known_args will print the error message anyway. That is what we need
@@ -237,7 +236,9 @@ class Argv(ArgumentParser):
             else:
                 return Success(self.parsed)
         except SystemExit as error:
-            if not pcall:
+            if has_help:
+                return Success({'help': True})
+            elif not pcall:
                 raise error
             else:
                 return Failure(error)
@@ -248,13 +249,13 @@ class Argv(ArgumentParser):
                 return Failure(error)
 
 
-# parser = Argv("Some CLI application")
-# parser.on(
-#     "-i",
-#     "--input-file",
-#     processor=[(int, []), lambda x: x + "1", float, lambda x: x + 1.5],
-#     nargs="?",
-# )
-# parser.on("-f", "--flag", action="store_true")
+parser = Argv("Some CLI application")
+parser.on(
+    "-i",
+    "--input-file",
+    processor=[(int, []), lambda x: x + 1, float, lambda x: x + 1.5],
+    nargs="?",
+)
+parser.on("-f", "--flag", action="store_true")
 
 __all__ = ["mkdefault", "Argv"]

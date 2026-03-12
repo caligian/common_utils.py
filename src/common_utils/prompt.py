@@ -159,21 +159,18 @@ class Validators:
 
 
 class Prompt:
-    def __init__(
-        self,
-        history: str | None = None,
-        prompt: str = "%",
-    ) -> None:
-        if history is None:
-            history = os.path.join(
+    Validators = Validators
+
+    def __init__(self, history_file: str | None = None) -> None:
+        if history_file is None:
+            history_file = os.path.join(
                 os.getenv("HOME"),
                 ".local",
                 "state",
                 "common_utils_default_session.history",
             )
 
-        self.prompt = prompt
-        self.history_file = history
+        self.history_file = history_file
         self.history: FileHistory | None
 
         if self.history_file:
@@ -310,3 +307,6 @@ class Prompt:
         else:
             return apply(response)
 
+make_prompt = Prompt
+
+__all__ = ['make_prompt']

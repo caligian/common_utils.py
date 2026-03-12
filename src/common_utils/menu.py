@@ -11,12 +11,12 @@ from src.common_utils.error import error_message
 from src.common_utils.prompt import Prompt
 
 
-MenuIndex = list[int]
-MenuInput = list[str] | str
-MenuCommandCondition = Callable[
+Index = list[int]
+Input = list[str] | str
+CommandCondition = Callable[
     [str], str | bool | ValueError | Success[str | bool] | Failure[ValueError]
 ]
-MenuCommandMapper = Callable[
+CommandMapper = Callable[
     [any], Success[str] | Failure[ValueError] | str | list[str]
 ]
 
@@ -197,7 +197,7 @@ def parse_range(
         start, end = int(inp[0]), int(inp[1])
 
         if start == 0 or end == 0:
-            return Failure(InvalidArgumentError("Menu items are not zero-indexed"))
+            return Failure(InvalidArgumentError(" items are not zero-indexed"))
 
         start = n + start if start < 0 else start
         end = n + end if end < 0 else end
@@ -216,7 +216,7 @@ def parse_range(
             if index[0] == 0:
                 return Failure(
                     InvalidArgumentError(
-                        "Menu items are not zero indexed while selection"
+                        " items are not zero indexed while selection"
                     )
                 )
         except ValueError:
@@ -229,15 +229,15 @@ def parse_range(
 
 
 @dataclass
-class MenuCommand:
+class Command:
     name: str
     desc: str
     nargs: str | int = field(default=1)
     aliases: list[str] | None = field(default=None)
-    cond: list[MenuCommandCondition] | MenuCommandCondition = field(
+    cond: list[CommandCondition] | CommandCondition = field(
         default_factory=lambda: []
     )
-    apply: list[MenuCommandMapper] | MenuCommandMapper = field(
+    apply: list[CommandMapper] | CommandMapper = field(
         default_factory=lambda: []
     )
 
@@ -416,15 +416,15 @@ class Menu:
         items: list[str],
         prompt_history: str | None = None,
     ) -> None:
-        self.commands: dict[str, MenuCommand] = {}
+        self.commands: dict[str, Command] = {}
         self.items: list[str] = items
         self.items_: list[str] = items
         self.max_key_width = max_key_width(items)
-        self.command_aliases: dict[str, MenuCommand] = {}
+        self.command_aliases: dict[str, Command] = {}
         self.history = []
         self.prompt = Prompt(prompt_history)
         self.prompt.init()
-        self.hooks: list[Callable[Menu], Success | Failure | Exception] = []
+        self.hooks: list[Callable[[], Success[bool] | Failure | Exception]] = []
 
         self.on(
             "filter",
@@ -561,7 +561,7 @@ class Menu:
 
     def on(
         self,
-        name: str | MenuCommand,
+        name: str | Command,
         desc: str,
         nargs: str | int = 1,
         aliases: list[str] | None = None,
@@ -571,8 +571,8 @@ class Menu:
         aliases = [] if aliases is None else aliases
         command = (
             name
-            if type(name) is MenuCommand
-            else MenuCommand(name, desc, nargs, aliases, cond, process)
+            if type(name) is Command
+            else Command(name, desc, nargs, aliases, cond, process)
         )
         self.commands[command.name] = command
         self.command_aliases[command.name] = command
@@ -633,7 +633,7 @@ class Menu:
     def add_hook(self, f: Callable[[Self], any]) -> None:
         self.hooks.append(partial(f, self))
 
-    def run_hooks(self) -> Success | Failure:
+    def run_hooks(self) -> Success[bool] | Failure:
         for h in self.hooks:
             try:
                 match h():
@@ -678,7 +678,7 @@ class Menu:
         if cmd.name == "quit":
             return
 
-        cmd: MenuCommand
+        cmd: Command
         parsed = cmd.parse(args)
 
         if isinstance(parsed, Failure):
@@ -720,6 +720,8 @@ class Menu:
                 return self.cli(print_items=True)
             case other:
                 f = getattr(self, f"cmd_{other}")
+                assert f, f".cmd_{other}() is not defined in class"
+
                 match f(*value):
                     case Success(value) as success:
                         if success["completed"]:
