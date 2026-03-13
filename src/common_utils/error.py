@@ -198,6 +198,7 @@ __all__ = [
     #
     # Get error type
     "as_error",
+    "as_exception",
     "error_class",
     "exception_class",
     "get_exception_class",
@@ -224,6 +225,7 @@ __all__ = [
     # Error arguments
     "error_args",
     "get_error_args",
+    "set_error_args",
     "exception_args",
     "set_exception_args",
     "get_exception_args",

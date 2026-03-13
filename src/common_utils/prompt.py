@@ -307,6 +307,7 @@ class Prompt:
         else:
             return apply(response)
 
+
 make_prompt = Prompt
 
-__all__ = ['make_prompt']
+__all__ = ["make_prompt"]

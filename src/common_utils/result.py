@@ -130,4 +130,4 @@ def safe(f: Callable) -> Callable[[...], Success | Failure]:
     return function
 
 
-__all__ = ["Success", "Failure", "UnwrapError", "safe", "Result"]
+__all__ = ["Success", "Failure", "UnwrapError", "safe", "Result", "Error", "T"]

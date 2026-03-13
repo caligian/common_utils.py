@@ -411,6 +411,9 @@ class Command:
 
 
 class Menu:
+    Command = Command
+    Utils = Utils
+
     def __init__(
         self,
         items: list[str],
@@ -769,3 +772,7 @@ menu.on("print_value", "Print all the values", nargs="+")
 # Invoking menu CLI but you can manipulate menu state by directly calling cmd_ functions
 menu.cli()
 """
+
+menu = Menu
+
+__all__ = [ 'menu', 'Menu' ]

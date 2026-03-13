@@ -784,6 +784,7 @@ __all__ = [
     "flatten",
     "foreach",
     "grep",
+    "grepv",
     "identity",
     "keep",
     "lextend",
@@ -802,6 +803,8 @@ __all__ = [
     "some",
     "split",
     "splitlines",
+    "startswith",
+    "endswith",
     "strfind",
     "tbl_apply",
     "tbl_exclude",
@@ -842,4 +845,5 @@ __all__ = [
     "Container",
     "Sequence",
     "Pattern",
+    "sed",
 ]

@@ -41,7 +41,7 @@ def whenNone(x: any, success: any, failure: any = None) -> any:
             return success(x)
         else:
             return success
-    elif failure:
+    elif failure is not None:
         if isinstance(failure, Callable):
             return failure(x)
         else:
@@ -54,7 +54,7 @@ def unlessNone(x: any, success: any, failure: any = None) -> any:
             return success(x)
         else:
             return success
-    elif failure:
+    elif failure is not None:
         if isinstance(failure, Callable):
             return failure(x)
         else:
@@ -67,7 +67,7 @@ def when(x: any, success: any, failure: any = None) -> any:
             return success(x)
         else:
             return success
-    elif failure:
+    elif failure is not None:
         if isinstance(failure, Callable):
             return failure(x)
         else:
@@ -248,7 +248,6 @@ __all__ = [
     "ispath",
     "is_str_like",
     "it",
-    "items",
     "keep",
     "lextend",
     "ls",
@@ -257,6 +256,7 @@ __all__ = [
     "make_exception",
     "make_prompt",
     "menu",
+    "Menu",
     "message",
     "mimetype",
     "mkdefault",
@@ -269,8 +269,6 @@ __all__ = [
     "not_empty",
     "ogrep",
     "orgrep",
-    "parser",
-    "parse_range",
     "paste",
     "paste0",
     "Pattern",
