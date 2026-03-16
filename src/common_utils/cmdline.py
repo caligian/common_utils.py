@@ -5,7 +5,7 @@ import shlex
 from collections import defaultdict
 from typing import Callable, Sequence
 from argparse import ArgumentParser
-from src.common_utils.result import Success, Failure
+from .result import Success, Failure
 
 ParsedValue = str | bool | int | float
 ParsedDict = dict[str, ParsedValue | list[ParsedValue]]

@@ -13,7 +13,7 @@ from prompt_toolkit.completion import NestedCompleter
 from prompt_toolkit.validation import Validator
 from prompt_toolkit.styles import Style
 
-from src.common_utils.result import Result
+from .result import Result
 
 
 class Validators:

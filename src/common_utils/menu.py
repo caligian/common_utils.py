@@ -6,9 +6,9 @@ from functools import partial
 from dataclasses import dataclass, field
 from termcolor import cprint
 from pyfzf import FzfPrompt
-from src.common_utils.result import Success, Failure, T, safe
-from src.common_utils.error import error_message
-from src.common_utils.prompt import Prompt
+from .result import Success, Failure, T, safe
+from .error import error_message
+from .prompt import Prompt
 
 
 Index = list[int]
@@ -16,9 +16,7 @@ Input = list[str] | str
 CommandCondition = Callable[
     [str], str | bool | ValueError | Success[str | bool] | Failure[ValueError]
 ]
-CommandMapper = Callable[
-    [any], Success[str] | Failure[ValueError] | str | list[str]
-]
+CommandMapper = Callable[[any], Success[str] | Failure[ValueError] | str | list[str]]
 
 
 class Utils:
@@ -69,18 +67,17 @@ class Utils:
 class Condition:
     @staticmethod
     def index(s: str | list[str]) -> bool:
-        s = re.split(r'\s+', s) if type(s) is str else s
+        s = re.split(r"\s+", s) if type(s) is str else s
         s = [x for x in s if len(x) > 0]
 
         for string in s:
-            exclude = string[0] == '^'
+            exclude = string[0] == "^"
             string = string[1:] if exclude else string
 
             if string[0] == 0:
-                return ValueError('Selection is 1-based, not 0-based')
+                return ValueError("Selection is 1-based, not 0-based")
             elif (
-                re.search("^[0-9]+-[0-9]+$", string) or\
-                re.search("^[0-9]+$", string)
+                re.search("^[0-9]+-[0-9]+$", string) or re.search("^[0-9]+$", string)
             ) is not None:
                 pass
             else:
@@ -215,9 +212,7 @@ def parse_range(
             index = [int(inp)]
             if index[0] == 0:
                 return Failure(
-                    InvalidArgumentError(
-                        " items are not zero indexed while selection"
-                    )
+                    InvalidArgumentError(" items are not zero indexed while selection")
                 )
         except ValueError:
             return Failure(InvalidArgumentError(f"Expected an integer, got {inp}"))
@@ -234,12 +229,8 @@ class Command:
     desc: str
     nargs: str | int = field(default=1)
     aliases: list[str] | None = field(default=None)
-    cond: list[CommandCondition] | CommandCondition = field(
-        default_factory=lambda: []
-    )
-    apply: list[CommandMapper] | CommandMapper = field(
-        default_factory=lambda: []
-    )
+    cond: list[CommandCondition] | CommandCondition = field(default_factory=lambda: [])
+    apply: list[CommandMapper] | CommandMapper = field(default_factory=lambda: [])
 
     def __post_init__(self) -> None:
         assert (self.nargs in ["+", "*", "?"]) or (type(self.nargs) is int)
@@ -662,7 +653,7 @@ class Menu:
     ) -> list[str] | None:
         match self.run_hooks():
             case Success() as success:
-                if success['completed']:
+                if success["completed"]:
                     return
                 else:
                     pass
@@ -775,4 +766,4 @@ menu.cli()
 
 menu = Menu
 
-__all__ = [ 'menu', 'Menu' ]
+__all__ = ["menu", "Menu"]

@@ -1,7 +1,9 @@
 from dataclasses import dataclass
 from typing import Self, Callable, Generic, TypeVar
-from src.common_utils.error import is_error_instance
 from functools import partial
+from termcolor import cprint
+
+from .error import is_error_instance
 
 T = TypeVar("T")
 Error = TypeVar("Error", bound=Exception)
@@ -98,6 +100,44 @@ class Failure(Result[Error]):
     def __init__(self, value: Error, metadata: dict[str, any] | None = None) -> None:
         assert isinstance(value, Exception)
         super().__init__(value, metadata)
+
+    def args(self) -> tuple:
+        return self.value.args
+
+    def message(
+        self,
+        tostr: bool = False,
+        format_with_metadata: bool = True,
+    ) -> str | None:
+        args = self.value.args
+        s: str | None = None
+
+        if tostr:
+            s = str(self.value)
+            if format_with_metadata:
+                s = args[0].format(*self.metadata)
+            else:
+                s = args[0]
+        elif isinstance(args[0], (list, bytes)) and len(args) == 1:
+            if format_with_metadata:
+                s = args[0].format(*self.metadata)
+            else:
+                s = args[0]
+
+        return s
+
+    def print(
+        self,
+        should_raise: bool = True,
+        format_with_metadata: bool = True,
+        color: str = "red",
+        tostr: bool = False,
+    ) -> None:
+        if should_raise:
+            self.unwrap()
+
+        msg = self.message(tostr=tostr, format_with_metadata=format_with_metadata)
+        cprint(msg, color)
 
 
 class Success(Result[T]):

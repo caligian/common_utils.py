@@ -3,11 +3,11 @@ import re
 from typing import Callable
 from pyfzf import FzfPrompt
 
-from src.common_utils.result import (
+from .result import (
     Success,
     Failure,
 )
-from src.common_utils.error import (
+from .error import (
     raise_error,
     is_error,
 )

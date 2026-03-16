@@ -21,8 +21,8 @@ from json import (
     loads as load_json,
     dumps as dump_json,
 )
-from src.common_utils.table import split
-from src.common_utils.process import system
+from .table import split
+from .process import system
 
 mkdir = os.makedirs
 is_dir = os.path.isdir

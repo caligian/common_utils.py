@@ -1,6 +1,6 @@
 import subprocess
 
-from src.common_utils.table import strip
+from .table import strip
 
 
 def system(

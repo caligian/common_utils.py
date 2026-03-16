@@ -15,14 +15,14 @@ from functools import reduce
 from pyfzf import FzfPrompt
 from sspipe import p, px
 
-from src.common_utils.menu import *
-from src.common_utils.process import *
-from src.common_utils.table import *
-from src.common_utils.file import *
-from src.common_utils.result import *
-from src.common_utils.cmdline import *
-from src.common_utils.error import *
-from src.common_utils.prompt import *
+from .menu import *
+from .process import *
+from .table import *
+from .file import *
+from .result import *
+from .cmdline import *
+from .error import *
+from .prompt import *
 
 StrLike = str | bytes
 
