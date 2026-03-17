@@ -18,6 +18,15 @@ Pattern = re.Pattern
 Container = list | tuple | dict
 Sequence = list | tuple
 
+
+def treduce(
+    tbl: Container,
+    init: any = None,
+    fn: Callable[[any, any], any] = lambda elem, acc: (elem, acc),
+) -> Container:
+    pass
+
+
 def some(x: Container) -> bool:
     if isinstance(x, dict):
         for value in x.values():
@@ -744,6 +753,9 @@ def fzf(
 
 tbl_map = tbl_apply
 tbl_filter = tbl_keep
+tbl_reduce = treduce
+tmap = tbl_map
+tfilter = tbl_filter
 aslist = as_list
 empty = blank
 not_empty = not_blank
@@ -817,8 +829,10 @@ __all__ = [
     "tbl_set",
     "tbl_grep",
     "tbl_grepv",
+    "tmap",
     "tapply",
     "texclude",
+    "treduce",
     "tget",
     "tset",
     "tfilter",
