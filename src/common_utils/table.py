@@ -3,6 +3,7 @@ import re
 from typing import Callable
 from pyfzf import FzfPrompt
 
+
 from .result import (
     Success,
     Failure,
@@ -11,11 +12,11 @@ from .error import (
     raise_error,
     is_error,
 )
+from functools import reduce
 
 Pattern = re.Pattern
 Container = list | tuple | dict
 Sequence = list | tuple
-
 
 def some(x: Container) -> bool:
     if isinstance(x, dict):
@@ -836,6 +837,7 @@ __all__ = [
     "strip",
     "lstrip",
     "rstrip",
+    "reduce",
     "fzf",
     "agrep",
     "ogrep",
