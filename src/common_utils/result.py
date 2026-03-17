@@ -3,28 +3,8 @@ from typing import Self, Callable, Generic, TypeVar
 from functools import partial
 from termcolor import cprint
 
-from .error import is_error_instance
-
 T = TypeVar("T")
 Error = TypeVar("Error", bound=Exception)
-
-
-@dataclass
-class UnwrapError(Exception):
-    __match_args__ = ("value",)
-
-    def __init__(self, value: Exception) -> None:
-        self.value = value
-        super().__init__(value)
-
-    def throw(self) -> None:
-        raise self
-
-    def unwrap(self, pcall: bool = False) -> None:
-        if not pcall:
-            self.throw()
-        else:
-            return self.value
 
 
 class Result(Generic[T]):
@@ -33,6 +13,23 @@ class Result(Generic[T]):
     def __init__(self, value: T, metadata: dict[str, any] | None = None) -> None:
         self.value = value
         self.metadata: dict[str, any] = {} if not metadata else metadata
+
+    def __str__(self) -> str:
+        s = str(self.value)
+        if isinstance(self.value, Exception):
+            s = s.lstrip().strip()
+            s = len(s) == 0 and s or type(self.value).__name__
+
+            if len(self.value.args) == 1 and isinstance(
+                self.value.args[0], (str, bytes)
+            ):
+                s = f"{s}: {self.value.args[0]}"
+            else:
+                s = f"{s}: {self.value.args}"
+
+            return s
+        else:
+            return s
 
     def __getitem__(self, metadata_key: str) -> None | any:
         return self.metadata.get(metadata_key)
@@ -46,25 +43,24 @@ class Result(Generic[T]):
     def not_ok(self) -> bool:
         return isinstance(self.value, Exception)
 
-    def throw(self, pcall: bool = False, value: T | None = None) -> UnwrapError | None:
+    def err(self) -> bool:
+        return self.not_ok()
+
+    def is_ok(self) -> bool:
+        return self.ok()
+
+    def is_err(self) -> bool:
+        return self.not_ok()
+
+    def throw(self, pcall: bool = False, value: T | None = None) -> Exception | None:
         value = self.value if value is None else value
         not_ok = self.not_ok()
 
         if not_ok:
             if not pcall:
-                raise UnwrapError(value)
+                raise value
             else:
-                return UnwrapError(value)
-
-    def check(self, f: Callable, value: T) -> tuple[bool, T]:
-        try:
-            value = f(value)
-            if is_error_instance(value):
-                return (False, UnwrapError(value))
-            else:
-                return (True, value)
-        except Exception as error:
-            return (False, UnwrapError(error))
+                return value
 
     def unwrap(self, pcall: bool = False) -> any:
         if self.not_ok():
@@ -72,23 +68,43 @@ class Result(Generic[T]):
         else:
             return self.value
 
-    def unwrap_or(self, f: Callable, or_else: Callable = lambda x: x) -> T | Error:
-        if not self.not_ok():
-            return f(UnwrapError(self.value))
-        else:
-            return or_else(self.value)
+    def merge_metadata(self, result: Self) -> Self:
+        metadata = result.metadata
+        for k, v in self.metadata.items():
+            if metadata.get(k) is None:
+                metadata[k] = v
+        return result
 
-    def unwrap_and(self, f: Callable, or_else: Callable = lambda x: x) -> T | Error:
+    def map(self, f: Callable[[any], any], *args, **kwargs) -> Self:
+        cls = type(self)
+        try:
+            res = f(self.value, *args, **kwargs)
+            if isinstance(res, cls):
+                return self.merge_metadata(res)
+            else:
+                return cls(res, self.metadata)
+        except Exception as error:
+            return cls(error, self.metadata)
+
+    def unwrap_or(
+        self,
+        f: Callable[[Exception], any],
+        or_else: Callable[[T], any] = lambda x: x,
+    ) -> Self[Error] | Self[T]:
+        if self.err():
+            return self.map(f)
+        else:
+            return self.map(or_else)
+
+    def unwrap_and(
+        self,
+        f: Callable,
+        or_else: Callable[[Error], any] = lambda error: error,
+    ) -> Self[Error] | Self[T]:
         if self.ok():
-            return f(self.value)
+            return self.map(f)
         else:
-            return or_else(UnwrapError(self.value))
-
-    def when(self, when: Callable, unless: Callable) -> T | Error:
-        return self.unwrap_and(when, unless)
-
-    def unless(self, unless: Callable, when: Callable) -> T | Error:
-        return self.when(when, unless)
+            return self.map(or_else)
 
     def bind(self, f: Callable) -> None:
         self.apply.append(f)
@@ -128,7 +144,7 @@ class Failure(Result[Error]):
 
     def print(
         self,
-        should_raise: bool = True,
+        should_raise: bool = False,
         format_with_metadata: bool = True,
         color: str = "red",
         tostr: bool = False,
@@ -156,18 +172,14 @@ def safe(f: Callable) -> Callable[[...], Success | Failure]:
 
             if t_result:
                 return result
-            elif isinstance(result, UnwrapError):
-                return Failure(result.value)
             elif isinstance(result, Exception):
                 return Failure(result)
             else:
                 return Success(result)
-        except UnwrapError as error:
-            return Failure(error.value)
         except Exception as error:
             return Failure(error)
 
     return function
 
 
-__all__ = ["Success", "Failure", "UnwrapError", "safe", "Result", "Error", "T"]
+__all__ = ["Success", "Failure", "safe", "Result", "Error", "T"]
