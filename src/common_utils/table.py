@@ -2,8 +2,7 @@ import re
 
 from typing import Callable
 from pyfzf import FzfPrompt
-
-
+from functools import reduce
 from .result import (
     Success,
     Failure,
@@ -12,19 +11,57 @@ from .error import (
     raise_error,
     is_error,
 )
-from functools import reduce
 
 Pattern = re.Pattern
 Container = list | tuple | dict
 Sequence = list | tuple
+Reducer = Callable[[int | str, any, any], any] | Callable[[any, any], any]
+Transformer = Callable[[int | str, any], any] | Callable[[any], any]
+Filter = Callable[[int | str, any], bool] | Callable[[any], bool]
 
 
 def treduce(
     tbl: Container,
     init: any = None,
-    fn: Callable[[any, any], any] = lambda elem, acc: (elem, acc),
-) -> Container:
-    pass
+    fn: Reducer = lambda elem, acc: (elem, acc),
+    index: bool = False,
+    ignore_errors: bool = True,
+    raise_on_error: bool = False,
+) -> any:
+    def check(v) -> bool:
+        if isinstance(v, Exception):
+            if raise_on_error:
+                raise v
+            elif ignore_errors:
+                return False
+            else:
+                return True
+        else:
+            return True
+
+    res: any = init
+
+    if index:
+        it = None
+        if isinstance(tbl, dict):
+            it = tbl.items()
+        else:
+            it = enumerate(tbl)
+
+        for k, v in it:
+            if check(v):
+                res = fn(k, v, res)
+    else:
+        it = None
+        if isinstance(tbl, dict):
+            it = tbl.values()
+        else:
+            it = tbl
+
+        for v in it:
+            res = fn(v, res)
+
+    return res
 
 
 def some(x: Container) -> bool:
@@ -76,7 +113,8 @@ def foreach(
     keep: Callable[[int | str, any], any] | Callable[[any], any] | None = None,
     exclude: Callable[[int | str], any] | Callable[[any], any] | None = None,
     until: Callable[[int, str], bool] | Callable[[any], any] | None = None,
-    ignore_errors: bool = True,
+    ignore_errors: bool = False,
+    raise_on_error: bool = False,
     index: bool = False,
 ) -> Container:
     if index:
@@ -130,6 +168,17 @@ def foreach(
         else:
             res.append(v)
 
+    def check(v) -> bool:
+        if isinstance(v, Exception):
+            if raise_on_error:
+                raise v
+            elif ignore_errors:
+                return False
+            else:
+                return True
+        else:
+            return True
+
     res = {} if isinstance(tbl, dict) else []
     it = None
 
@@ -145,62 +194,74 @@ def foreach(
 
     if index:
         for k, v in it:
-            if keep(k, v) and not exclude(k, v) and not until(k, v):
-                if ignore_errors:
-                    if not is_error(v):
-                        new_value = apply(k, v)
-                        append(res, k=k, v=new_value)
-                elif is_error(v):
-                    raise_error(v, f"Key passed: {k}")
-                else:
-                    new_value = apply(k, v)
-                    append(res, k=k, v=new_value)
+            if not check(v):
+                continue
+            elif keep(k, v) and not exclude(k, v) and not until(k, v):
+                append(res, k=k, v=apply(k, v))
     else:
         for x in it:
-            if keep(x) and not exclude(x) and not until(x):
-                if ignore_errors:
-                    if not is_error(x):
-                        new_value = apply(x)
-                        append(res, k=None, v=new_value)
-                elif is_error(x):
-                    raise_error(x, f"Key passed: {k}")
-                else:
-                    new_value = apply(x)
-                    append(res, k=None, v=new_value)
+            if not check(x):
+                continue
+            elif keep(x) and not exclude(x) and not until(x):
+                append(res, k=k, v=apply(x))
 
     return type(tbl)(res)
 
 
 def keep(
     tbl: Container,
-    f: Callable[[int | str, any], any] | Callable[[any], any],
+    f: Filter,
+    exclude: Filter | None = None,
     index: bool = False,
+    ignore_errors: bool = False,
+    raise_on_error: bool = False,
 ) -> Container:
-    return foreach(tbl, keep=f, index=index)
-
-
-def tbl_apply(
-    tbl: Container,
-    f: Callable[[int | str, any], any] | Callable[[any], any],
-    index: bool = False,
-) -> Container:
-    return foreach(tbl, apply=f, index=index)
-
-
-def tbl_keep(
-    tbl: Container,
-    f: Callable[[int | str, any], any] | Callable[[any], any],
-    index: bool = False,
-) -> Container:
-    return foreach(tbl, keep=f, index=index)
+    return foreach(
+        tbl,
+        keep=f,
+        exclude=exclude,
+        index=index,
+        ignore_errors=ignore_errors,
+        raise_on_error=raise_on_error,
+    )
 
 
 def tbl_exclude(
     tbl: Container,
-    f: Callable[[int | str, any], any] | Callable[[any], any],
+    f: Filter,
+    keep: Filter | None = None,
     index: bool = False,
+    ignore_errors: bool = False,
+    raise_on_error: bool = False,
 ) -> Container:
-    return foreach(tbl, exclude=f, index=index)
+    return foreach(
+        tbl,
+        exclude=f,
+        keep=keep,
+        index=index,
+        ignore_errors=ignore_errors,
+        raise_on_error=raise_on_error,
+    )
+
+
+def tbl_apply(
+    tbl: Container,
+    f: Transformer,
+    index: bool = False,
+    ignore_errors: bool = False,
+    raise_on_error: bool = False,
+) -> Container:
+    return foreach(
+        tbl,
+        apply=f,
+        index=index,
+        ignore_errors=ignore_errors,
+        raise_on_error=raise_on_error,
+    )
+
+
+tbl_keep = keep
+texclude = tbl_exclude
 
 
 def tbl_get(
@@ -332,10 +393,6 @@ def paste(
 ) -> str:
     return (collapse).join(flatten(s))
 
-
-def unwrap(xs: Sequence) -> any:
-    assert len(xs) == 1
-    return xs[0]
 
 
 def push(
@@ -754,8 +811,6 @@ def fzf(
 tbl_map = tbl_apply
 tbl_filter = tbl_keep
 tbl_reduce = treduce
-tmap = tbl_map
-tfilter = tbl_filter
 aslist = as_list
 empty = blank
 not_empty = not_blank
@@ -774,41 +829,59 @@ tmap = tbl_map
 tkeep = tbl_keep
 tgrep = tbl_grep
 tgrepv = tbl_grepv
+tmap = tbl_map
+tfilter = tbl_filter
 
 __all__ = [
-    "asint",
-    "asfloat",
-    "as_int",
-    "as_float",
-    "isint",
-    "isfloat",
-    "is_int",
-    "is_float",
+    "Container",
+    "Pattern",
+    "Sequence",
+    "agrep",
     "all",
     "andgrep",
+    "as_float",
+    "as_int",
     "as_list",
+    "asfloat",
+    "asint",
     "aslist",
     "assoc",
     "blank",
-    "empty",
-    "not_empty",
+    "butlast",
+    "car",
+    "cdr",
     "container",
+    "empty",
+    "endswith",
     "extend",
     "flatten",
     "foreach",
+    "fzf",
     "grep",
     "grepv",
+    "head",
     "identity",
+    "is_float",
+    "is_int",
+    "isfloat",
+    "isint",
     "keep",
     "lextend",
+    "lstrip",
     "not_blank",
+    "not_empty",
+    "ogrep",
     "orgrep",
     "paste",
     "paste0",
     "pop",
     "popn",
     "push",
+    "reduce",
     "reverse",
+    "rstrip",
+    "sed",
+    "seq",
     "seq_along",
     "sequence",
     "shift",
@@ -817,49 +890,32 @@ __all__ = [
     "split",
     "splitlines",
     "startswith",
-    "endswith",
     "strfind",
+    "strip",
+    "strmatch",
+    "tail",
+    "tapply",
     "tbl_apply",
     "tbl_exclude",
     "tbl_filter",
     "tbl_get",
+    "tbl_grep",
+    "tbl_grepv",
     "tbl_has",
     "tbl_keep",
     "tbl_map",
     "tbl_set",
-    "tbl_grep",
-    "tbl_grepv",
-    "tmap",
-    "tapply",
     "texclude",
-    "treduce",
-    "tget",
-    "tset",
     "tfilter",
-    "tmap",
-    "tkeep",
+    "tget",
     "tgrep",
     "tgrepv",
+    "tkeep",
+    "tmap",
+    "tmap",
+    "treduce",
+    "tset",
     "unpush",
-    "head",
-    "tail",
-    "unwrap",
-    "butlast",
-    "car",
-    "seq",
-    "cdr",
-    "strip",
-    "lstrip",
-    "rstrip",
-    "reduce",
-    "fzf",
-    "agrep",
-    "ogrep",
-    "strmatch",
     #
     # Other classes
-    "Container",
-    "Sequence",
-    "Pattern",
-    "sed",
 ]

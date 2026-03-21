@@ -147,12 +147,34 @@ class Result(Generic[T]):
 
     def merge_metadata(self, result: Self) -> Self:
         metadata = result.metadata
+        metadata = metadata.copy()
+
         for k, v in self.metadata.items():
             if metadata.get(k) is None:
                 metadata[k] = v
+
+        result.metadata = metadata
         return result
 
-    def map(self, f: Callable[[any], "Result"], *args, **kwargs) -> Self:
+
+    def map_err(self, f: Callable[[Exception, ...], any], *args, **kwargs) -> Self:
+        cls = type(self)
+        if cls.__name__ != "Result":
+            cls = self.__base__
+
+        if self.err():
+            try:
+                res = f(self.value, *args, **kwargs)
+                if isinstance(res, cls):
+                    return self.merge_metadata(res)
+                else:
+                    return self.merge_metadata(cls(res))
+            except Exception as error:
+                return self.merge_metadata(cls(error))
+        else:
+            return 
+
+    def map(self, f: Callable[[T, ...], any], *args, **kwargs) -> Self:
         cls = type(self)
         if cls.__name__ != "Result":
             cls = self.__base__
@@ -246,17 +268,15 @@ def unwrap(
         return default_factory()
 
 
-AnyResult = Success | Failure
 __all__ = [
-    "Success",
+    "Error",
     "Failure",
     "Result",
-    "AnyResult",
-    "Error",
+    "Success",
     "T",
-    "safe",
-    "is_ok",
     "is_err",
+    "is_ok",
     "is_result",
+    "safe",
     "unwrap",
 ]

@@ -249,13 +249,13 @@ class Argv(ArgumentParser):
                 return Failure(error)
 
 
-parser = Argv("Some CLI application")
-parser.on(
-    "-i",
-    "--input-file",
-    processor=[(int, []), lambda x: x + 1, float, lambda x: x + 1.5],
-    nargs="?",
-)
-parser.on("-f", "--flag", action="store_true")
+# parser = Argv("Some CLI application")
+# parser.on(
+#     "-i",
+#     "--input-file",
+#     processor=[(int, []), lambda x: x + 1, float, lambda x: x + 1.5],
+#     nargs="?",
+# )
+# parser.on("-f", "--flag", action="store_true")
 
 __all__ = ["mkdefault", "Argv"]

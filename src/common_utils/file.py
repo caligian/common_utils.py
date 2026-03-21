@@ -6,8 +6,8 @@ import re
 from glob import glob
 from typing import Callable
 from pickle import (
-    load as fh_pkl_load,
-    dump as fh_pkl_dump,
+    load as fh_load_pkl,
+    dump as fh_dump_pkl,
     loads as load_pkl,
     dumps as dump_pkl,
 )
@@ -16,8 +16,8 @@ from csv import (
     writer as csv_writer,
 )
 from json import (
-    load as fh_json_load,
-    dump as fh_json_dump,
+    load as fh_load_json,
+    dump as fh_dump_json,
     loads as load_json,
     dumps as dump_json,
 )
@@ -59,22 +59,24 @@ def has_extension(filename: str, *pattern: str | re.Pattern) -> bool:
 
 def read_json(filename: str) -> any:
     with open(filename, "r") as fh:
-        return fh_json_load(fh)
+        return fh_load_json(fh)
 
 
-def write_json(filename: str, obj: any) -> None:
+def write_json(filename: str, obj: any) -> bool:
     with open(filename, "w") as fh:
-        fh_json_dump(obj, fh)
+        fh_dump_json(obj, fh)
+        return True
 
 
 def read_pkl(filename: str) -> any:
     with open(filename, "rb") as fh:
-        return fh_pkl_load(fh)
+        return fh_load_pkl(fh)
 
 
-def write_pkl(filename: str, obj: any) -> any:
+def write_pkl(filename: str, obj: any) -> bool:
     with open(filename, "wb") as fh:
-        return fh_pkl_dump(obj, fh)
+        fh_dump_pkl(obj, fh)
+        return True
 
 
 def read_csv(
@@ -148,7 +150,9 @@ def spit(
             return write_json(filename, obj)
         case ft if ft in ("text", "txt", "t"):
             with open(filename, mode) as fh:
-                fh.write(str(obj))
+                obj = str(obj)
+                fh.write(obj)
+                return len(obj)
         case ft if ft in ("pickle", "pkl", "p"):
             return write_pkl(filename, obj)
         case writer if callable(writer):
@@ -239,9 +243,14 @@ def readlines(filename: str) -> list[str]:
 def writelines(
     filename: str,
     *text: list[str],
+    binary: bool = False,
     append_newline: bool = True,
 ) -> int:
-    with open(filename, "w") as fh:
+    mode = 'w'
+    if binary:
+        mode = 'wb'
+        
+    with open(filename, mode) as fh:
         size = 0
         for line in text:
             if append_newline:
@@ -267,35 +276,45 @@ def whereis(binary: str) -> list[str] | None:
 
 
 __all__ = [
-    "load_pkl",
-    "dump_pkl",
-    "load_json",
-    "dump_json",
     "abspath",
     "basename",
     "cp",
     "cpstat",
+    "csv_reader",
+    "csv_writer",
     "dirname",
+    "dump_json",
+    "dump_json",
+    "dump_pkl",
+    "dump_pkl",
+    "exists",
+    "fh_dump_json",
+    "fh_dump_pkl",
+    "fh_load_json",
+    "fh_load_pkl",
     "file_extension",
     "has_extension",
     "is_dir",
-    "isdir",
     "is_file",
-    "isfile",
     "is_junction",
-    "isjunction",
     "is_link",
     "is_mount",
+    "isdir",
+    "isfile",
+    "isjunction",
     "ismount",
     "ispath",
+    "load_json",
+    "load_json",
+    "load_pkl",
+    "load_pkl",
     "ls",
     "mimetype",
     "mkdir",
-    "exists",
     "read_csv",
     "read_json",
-    "readlines",
     "read_pkl",
+    "readlines",
     "rm",
     "rmtree",
     "slurp",
@@ -304,6 +323,6 @@ __all__ = [
     "whereis",
     "write_csv",
     "write_json",
-    "writelines",
     "write_pkl",
+    "writelines",
 ]
