@@ -1,12 +1,9 @@
 import re
 
-from typing import Callable
+from typing import Callable, overload, Any, Literal
 from pyfzf import FzfPrompt
 from functools import reduce
-from .result import (
-    Success,
-    Failure,
-)
+from .result import Ok, Err, Result, T, E
 from .error import (
     raise_error,
     is_error,
@@ -15,56 +12,76 @@ from .error import (
 Pattern = re.Pattern
 Container = list | tuple | dict
 Sequence = list | tuple
-Reducer = Callable[[int | str, any, any], any] | Callable[[any, any], any]
-Transformer = Callable[[int | str, any], any] | Callable[[any], any]
-Filter = Callable[[int | str, any], bool] | Callable[[any], bool]
+Reducer = Callable[[int | str, Any, Any], Any] | Callable[[Any, Any], Any]
+Transformer = Callable[[int | str, Any], Any] | Callable[[Any], Any]
+Filter = Callable[[int | str, Any], bool] | Callable[[Any], bool]
+
+
+@overload
+def treduce(
+    tbl,
+    init,
+    fn: Callable[[Any, Any], Any],
+    index=False,
+    ignore_errors=True,
+    raise_on_error=False,
+): ...
+
+
+@overload
+def treduce(
+    tbl,
+    init,
+    fn: Callable[[int | str, Any, Any], Any],
+    index=True,
+    ignore_errors=True,
+    raise_on_error=False,
+): ...
 
 
 def treduce(
     tbl: Container,
-    init: any = None,
-    fn: Reducer = lambda elem, acc: (elem, acc),
+    init: Any | None = None,
+    fn: Reducer | None = None,
     index: bool = False,
     ignore_errors: bool = True,
     raise_on_error: bool = False,
-) -> any:
+) -> Any:
+    if fn is None:
+        if index:
+
+            def fn(k, elem, acc):
+                return acc
+        else:
+
+            def fn(elem, acc):
+                return acc
+
     def check(v) -> bool:
         if isinstance(v, Exception):
             if raise_on_error:
                 raise v
-            elif ignore_errors:
-                return False
             else:
-                return True
+                return not ignore_errors
         else:
             return True
 
-    res: any = init
-
+    res: Any = init
     if index:
-        it = None
-        if isinstance(tbl, dict):
-            it = tbl.items()
-        else:
-            it = enumerate(tbl)
-
+        it = tbl.items() if isinstance(tbl, dict) else enumerate(tbl)
         for k, v in it:
             if check(v):
                 res = fn(k, v, res)
     else:
-        it = None
-        if isinstance(tbl, dict):
-            it = tbl.values()
-        else:
-            it = tbl
-
+        it = tbl.values() if isinstance(tbl, dict) else tbl
         for v in it:
-            res = fn(v, res)
+            if check(v):
+                res = fn(v, res)
 
     return res
 
 
-def some(x: Container) -> bool:
+def tsome(x: Container) -> bool:
     if isinstance(x, dict):
         for value in x.values():
             if value:
@@ -72,12 +89,12 @@ def some(x: Container) -> bool:
     else:
         for value in x:
             if value:
-                return x
+                return True
 
     return False
 
 
-def all(x: Container) -> bool:
+def tall(x: Container) -> bool:
     if isinstance(x, dict):
         for value in x.values():
             if not value:
@@ -88,82 +105,97 @@ def all(x: Container) -> bool:
         for value in x:
             if not value:
                 return False
-
         return True
 
 
-def blank(s: str | list | tuple | dict) -> bool:
+def tblank(s: str | list | tuple | dict) -> bool:
     return len(s) == 0
 
 
-def not_blank(s: str | list | tuple | dict) -> bool:
-    return len(s) > 0
-
-
-def seq_along(xs: Container) -> list[int]:
+def tkeys(xs: Container) -> list[int | str]:
     if isinstance(xs, (list, tuple)):
         return list(range(len(xs)))
     else:
         return list(xs.keys())
 
 
-def foreach(
+def titems(xs: Container) -> list[tuple[int | str, Any]]:
+    if isinstance(xs, (list, tuple)):
+        return list(enumerate(xs))
+    else:
+        return list(xs.items())
+
+
+def tvalues(xs: Container) -> list[Any]:
+    if isinstance(xs, (list, tuple)):
+        return xs
+    else:
+        return list(xs.values())
+
+
+@overload
+def tfor(
+    tbl,
+    index=False,
+    apply: Callable[[Any], Any] | None = None,
+    keep: Callable[[Any], bool] | None = None,
+    exclude: Callable[[Any], bool] | None = None,
+    until: Callable[[Any], bool] | None = None,
+    when: Callable[[int | str, Any], bool] | None = None,
+    ignore_errors: bool = False,
+    raise_on_error: bool = False,
+    cast: bool = False,
+) -> Container: ...
+
+
+@overload
+def tfor(
+    tbl,
+    index=True,
+    apply: Callable[[int | str, Any], Any] | None = None,
+    keep: Callable[[int | str, Any], bool] | None = None,
+    exclude: Callable[[int | str, Any], bool] | None = None,
+    until: Callable[[int | str, Any], bool] | None = None,
+    when: Callable[[int | str, Any], bool] | None = None,
+    ignore_errors: bool = False,
+    raise_on_error: bool = False,
+    cast: bool = False,
+) -> Container: ...
+
+
+def tfor(
     tbl: Container,
-    apply: Callable[[int | str, any], any] | Callable[[any], any] | None = None,
-    keep: Callable[[int | str, any], any] | Callable[[any], any] | None = None,
-    exclude: Callable[[int | str], any] | Callable[[any], any] | None = None,
-    until: Callable[[int, str], bool] | Callable[[any], any] | None = None,
+    apply: Transformer | None = None,
+    keep: Filter | None = None,
+    exclude: Filter | None = None,
+    until: Filter | None = None,
+    when: Filter | None = None,
     ignore_errors: bool = False,
     raise_on_error: bool = False,
     index: bool = False,
+    cast: bool = False,
 ) -> Container:
     if index:
-        if not apply:
-
-            def apply(_, x):
-                return x
-
-        if not keep:
-
-            def keep(_, x):
-                return True
-
-        if not exclude:
-
-            def exclude(_, x):
-                return False
-
-        if not until:
-
-            def until(_, x):
-                return False
+        apply = apply or (lambda _, x: x)
+        keep = keep or (lambda _, x: True)
+        exclude = exclude or (lambda _, x: False)
+        until = until or (lambda _, x: False)
+        when = when or (lambda _, x: True)
     else:
-        if not apply:
+        apply = apply or (lambda x: x)
+        keep = keep or (lambda x: True)
+        exclude = exclude or (lambda x: False)
+        until = until or (lambda x: False)
+        when = when or (lambda x: True)
 
-            def apply(x):
-                return x
-
-        if not keep:
-
-            def keep(x):
-                if x:
-                    return True
-
-        if not exclude:
-
-            def exclude(x):
-                return False
-
-        if not until:
-
-            def until(x):
-                return False
-
-    def append(res, k=None, v=None):
+    def append(
+        res: Container,
+        k: str | int | None = None,
+        v: Any | None = None,
+    ) -> None:
         if isinstance(res, dict):
-            assert k
             res[k] = v
-        elif k:
+        elif k is not None:
             res.append((k, v))
         else:
             res.append(v)
@@ -196,19 +228,40 @@ def foreach(
         for k, v in it:
             if not check(v):
                 continue
-            elif keep(k, v) and not exclude(k, v) and not until(k, v):
+            elif when(k, v) and keep(k, v) and not exclude(k, v) and not until(k, v):
                 append(res, k=k, v=apply(k, v))
     else:
         for x in it:
             if not check(x):
                 continue
-            elif keep(x) and not exclude(x) and not until(x):
-                append(res, k=k, v=apply(x))
+            elif when(x) and keep(x) and not exclude(x) and not until(x):
+                append(res, v=apply(x))
 
-    return type(tbl)(res)
+    if cast:
+        return type(tbl)(res)
+    else:
+        return res
 
 
-def keep(
+@overload
+def tkeep(
+    tbl,
+    f: Callable[[Any], bool],
+    exclude: Callable[[Any], bool] | None = None,
+    index=False,
+) -> Container: ...
+
+
+@overload
+def tkeep(
+    tbl,
+    f: Callable[[int | str, Any], bool] = None,
+    exclude: Callable[[int | str, Any], bool] | None = None,
+    index=True,
+) -> Container: ...
+
+
+def tkeep(
     tbl: Container,
     f: Filter,
     exclude: Filter | None = None,
@@ -216,7 +269,7 @@ def keep(
     ignore_errors: bool = False,
     raise_on_error: bool = False,
 ) -> Container:
-    return foreach(
+    return tfor(
         tbl,
         keep=f,
         exclude=exclude,
@@ -226,7 +279,25 @@ def keep(
     )
 
 
-def tbl_exclude(
+@overload
+def texclude(
+    tbl,
+    f: Callable[[Any], bool],
+    keep: Callable[[Any], bool] | None = None,
+    index=False,
+) -> Container: ...
+
+
+@overload
+def texclude(
+    tbl,
+    f: Callable[[int | str, Any], bool] = None,
+    keep: Callable[[int | str, Any], bool] | None = None,
+    index=True,
+) -> Container: ...
+
+
+def texclude(
     tbl: Container,
     f: Filter,
     keep: Filter | None = None,
@@ -234,7 +305,7 @@ def tbl_exclude(
     ignore_errors: bool = False,
     raise_on_error: bool = False,
 ) -> Container:
-    return foreach(
+    return tfor(
         tbl,
         exclude=f,
         keep=keep,
@@ -244,14 +315,30 @@ def tbl_exclude(
     )
 
 
-def tbl_apply(
+@overload
+def tapply(
+    tbl,
+    f: Callable[[Any], bool],
+    index=False,
+) -> Container: ...
+
+
+@overload
+def tapply(
+    tbl,
+    f: Callable[[int | str, Any], bool] = None,
+    index=True,
+) -> Container: ...
+
+
+def tapply(
     tbl: Container,
     f: Transformer,
     index: bool = False,
     ignore_errors: bool = False,
     raise_on_error: bool = False,
 ) -> Container:
-    return foreach(
+    return tfor(
         tbl,
         apply=f,
         index=index,
@@ -260,22 +347,18 @@ def tbl_apply(
     )
 
 
-tbl_keep = keep
-texclude = tbl_exclude
-
-
-def tbl_get(
+def tget(
     xs: Container,
     *ks: int | str | list[int | str],
     pcall: bool = False,
-) -> list[any]:
+) -> list[Any | Exception]:
     res = []
 
     for k in ks:
         match assoc(xs, k):
-            case Success(x):
+            case Ok(x):
                 res.append(x)
-            case Failure(error):
+            case Err(error):
                 if not pcall:
                     raise error
                 else:
@@ -284,25 +367,25 @@ def tbl_get(
     return res
 
 
-def tbl_has(
+def thas(
     xs: Container,
     *ks: int | str | list[int | str],
-) -> list[any]:
+) -> list[bool]:
     res = []
 
     for k in ks:
         match assoc(xs, k):
-            case Success(value):
-                res.append(value)
-            case Failure():
+            case Ok():
+                res.append(True)
+            case Err():
                 res.append(False)
 
     return res
 
 
-def tbl_set(
+def tset(
     xs: Container,
-    *keys_and_values: tuple[any, any],
+    *keys_and_values: tuple[Any, Any],
     pcall: bool = False,
 ) -> Container | Exception:
     if len(keys_and_values) == 0:
@@ -310,9 +393,9 @@ def tbl_set(
 
     for k, v in keys_and_values:
         match assoc(xs, k, value=v):
-            case Success():
+            case Ok():
                 continue
-            case Failure(error):
+            case Err(error):
                 if not pcall:
                     raise error
                 else:
@@ -323,28 +406,35 @@ def tbl_set(
 
 def assoc(
     d: Container,
-    ks: any,
-    value: any = None,
-) -> Success | Failure:
+    ks: int | str | list[int | str],
+    value: Any = None,
+    set: bool = False,
+) -> Result[T, E]:
     ks = [ks] if not sequence(ks) else ks
     v = d
 
-    for k in ks[:-1]:
+    for i, k in enumerate(ks[:-1]):
         try:
             v = v[k]
         except Exception as error:
-            return Failure(error)
+            return Err(
+                error,
+                dict(obj=d, ks=ks, k=k, index=i),
+            )
 
     k = ks[-1]
     try:
-        if value is not None:
+        if set:
             v[k] = value
-        return Success(v[k])
+        return Ok(v[k])
     except Exception as error:
-        return Failure(error)
+        return Err(
+            error,
+            dict(obj=d, ks=ks, k=ks[-1], index=len(ks) - 1),
+        )
 
 
-def as_list(xs: any, force: bool = False) -> list:
+def as_list(xs: Any, force: bool = False) -> list:
     if force:
         return [xs]
     elif sequence(xs):
@@ -394,10 +484,9 @@ def paste(
     return (collapse).join(flatten(s))
 
 
-
 def push(
     xs: Sequence,
-    *elements: any,
+    *elements: Any,
     index: int | None = None,
 ) -> Sequence:
     cls = type(xs)
@@ -420,22 +509,47 @@ def reverse(xs: tuple | list | str) -> tuple | list | str:
     return xs[::-1]
 
 
-def unpush(xs: Sequence, *elements: any) -> Sequence:
+def unpush(xs: Sequence, *elements: Any) -> Sequence:
     return push(xs, *elements, index=0)
+
+
+@overload
+def extend(
+    xs: list, *elements: Any, index: int | None = None, cast: Literal[False] = False
+) -> list: ...
+
+
+@overload
+def extend(
+    xs: tuple, *elements: Any, index: int | None = None, cast: Literal[False] = False
+) -> list: ...
+
+
+@overload
+def extend(
+    xs: list, *elements: Any, index: int | None = None, cast: Literal[True]
+) -> list: ...
+
+
+@overload
+def extend(
+    xs: tuple, *elements: Any, index: int | None = None, cast: Literal[True]
+) -> tuple: ...
 
 
 def extend(
     xs: Sequence,
-    *elements: any,
+    *elements: Any,
     index: int | None = None,
-) -> Sequence:
+    cast: bool = False,
+) -> list | tuple:
     cls = type(xs)
     xs = list(xs)
     xs_len = len(xs)
     index = xs_len - 1 if index is None else index
     index = xs_len + index if index < 0 else index
 
-    if index == xs_len - 1:
+    if index >= xs_len - 1:
         for e in elements:
             if sequence(e):
                 xs.extend(list(e))
@@ -448,10 +562,13 @@ def extend(
             else:
                 xs.insert(index, e)
 
-    return cls(xs)
+    if cast:
+        return cls(xs)
+    else:
+        return xs
 
 
-def lextend(xs: list, *elements: any) -> Sequence:
+def lextend(xs: Sequence, *elements: Any, cast: bool = False) -> list | tuple:
     cls = type(xs)
     xs = list(xs)
 
@@ -461,27 +578,43 @@ def lextend(xs: list, *elements: any) -> Sequence:
         else:
             xs.insert(0, e)
 
-    return cls(xs)
+    if cast:
+        return cls(xs)
+    else:
+        return xs
 
 
-def identity(element: any) -> any:
+def identity(element: Any) -> Any:
     return element
 
 
 def pop(
     xs: list | dict,
     index: int | str = -1,
-    default: Callable | None = None,
+    default: Any | None = None,
+    default_factory: Callable | None = None,
     pcall: bool = False,
-) -> any:
-    if type(xs) is dict and type(index) is int:
-        index = list(xs.keys())[index]
+) -> Any | KeyError | IndexError:
+    if isinstance(xs, dict) and isinstance(index, int):
+        try:
+            index = list(xs.keys())[index]
+        except (IndexError, KeyError) as error:
+            if default_factory:
+                return default_factory()
+            elif default is not None:
+                return default
+            elif pcall:
+                return error
+            else:
+                raise error
 
     try:
         return xs.pop(index)
     except (IndexError, KeyError) as error:
-        if default:
-            return default()
+        if default_factory:
+            return default_factory()
+        elif default is not None:
+            return default
         elif pcall:
             return error
         else:
@@ -508,7 +641,7 @@ def popn(
     reverse: bool = False,
     pcall: bool = False,
     default: Callable | None = None,
-) -> list[any]:
+) -> list[Any]:
     res = []
     for i in range(n):
         res.append(
@@ -533,7 +666,7 @@ def shiftn(
     reverse: bool = False,
     pcall: bool = False,
     default: Callable | None = None,
-) -> list[any]:
+) -> list[Any]:
     return popn(
         xs,
         n,
@@ -647,7 +780,7 @@ def grepv(x: Container, *pattern, **kwargs) -> Container:
     return grep(x, *pattern, invert=True, **kwargs)
 
 
-def car(x: Sequence) -> any:
+def car(x: Sequence) -> Any:
     try:
         return x[0]
     except Exception:
@@ -658,7 +791,7 @@ def cdr(x: Sequence) -> Sequence:
     return x[1:]
 
 
-def butlast(x: Sequence) -> any:
+def butlast(x: Sequence) -> Any:
     return x[: len(x) - 1]
 
 
@@ -736,10 +869,6 @@ def sed(
     return s
 
 
-tbl_grep = grep
-tbl_grepv = grepv
-
-
 def strip(s: str, lhs: bool = True, rhs: bool = True) -> str:
     if lhs:
         s = lstrip(s)
@@ -759,7 +888,7 @@ def rstrip(s: str) -> str:
 
 
 def fzf(
-    tbl: dict[str, any] | list | tuple,
+    tbl: dict[str, Any] | list | tuple,
     lalign: bool = True,
     ralign: bool = False,
     center: bool = False,
@@ -770,7 +899,7 @@ def fzf(
     _tbl = {}
     longest = 0
     display = []
-    index = seq_along(tbl)
+    index = tkeys(tbl)
     _dict = isinstance(tbl, dict)
 
     if not skip_index:
@@ -808,54 +937,22 @@ def fzf(
     return [tbl[lookup[k]] for k in choice]
 
 
-tbl_map = tbl_apply
-tbl_filter = tbl_keep
-tbl_reduce = treduce
-aslist = as_list
-empty = blank
-not_empty = not_blank
-isint = is_int
-isfloat = is_float
-asint = as_int
-asfloat = as_float
-agrep = andgrep
-ogrep = orgrep
-tapply = tbl_apply
-texclude = tbl_exclude
-tget = tbl_get
-tset = tbl_set
-tfilter = tbl_filter
-tmap = tbl_map
-tkeep = tbl_keep
-tgrep = tbl_grep
-tgrepv = tbl_grepv
-tmap = tbl_map
-tfilter = tbl_filter
-
 __all__ = [
     "Container",
     "Pattern",
     "Sequence",
-    "agrep",
-    "all",
     "andgrep",
     "as_float",
     "as_int",
     "as_list",
-    "asfloat",
-    "asint",
-    "aslist",
     "assoc",
-    "blank",
     "butlast",
     "car",
     "cdr",
     "container",
-    "empty",
     "endswith",
     "extend",
     "flatten",
-    "foreach",
     "fzf",
     "grep",
     "grepv",
@@ -863,14 +960,8 @@ __all__ = [
     "identity",
     "is_float",
     "is_int",
-    "isfloat",
-    "isint",
-    "keep",
     "lextend",
     "lstrip",
-    "not_blank",
-    "not_empty",
-    "ogrep",
     "orgrep",
     "paste",
     "paste0",
@@ -882,11 +973,12 @@ __all__ = [
     "rstrip",
     "sed",
     "seq",
-    "seq_along",
+    "tkeys",
+    "tvalues",
+    "titems",
     "sequence",
     "shift",
     "shiftn",
-    "some",
     "split",
     "splitlines",
     "startswith",
@@ -894,28 +986,16 @@ __all__ = [
     "strip",
     "strmatch",
     "tail",
+    "tall",
     "tapply",
-    "tbl_apply",
-    "tbl_exclude",
-    "tbl_filter",
-    "tbl_get",
-    "tbl_grep",
-    "tbl_grepv",
-    "tbl_has",
-    "tbl_keep",
-    "tbl_map",
-    "tbl_set",
+    "tblank",
     "texclude",
-    "tfilter",
+    "tfor",
     "tget",
-    "tgrep",
-    "tgrepv",
+    "thas",
     "tkeep",
-    "tmap",
-    "tmap",
     "treduce",
     "tset",
+    "tsome",
     "unpush",
-    #
-    # Other classes
 ]
