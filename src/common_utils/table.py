@@ -492,8 +492,11 @@ def push(
     cls = type(xs)
     xs = list(xs)
     xs_len = len(xs)
-    index = xs_len - 1 if index is None else index
-    index = xs_len + index if index < 0 else index
+
+    if index is None:
+        index = xs_len
+    elif index < 0:
+        index = max(0, xs_len + index)
 
     if index == xs_len - 1:
         for e in elements:
@@ -566,6 +569,18 @@ def extend(
         return cls(xs)
     else:
         return xs
+
+
+@overload
+def lextend(xs: tuple, *elements: Any, cast: Literal[False] = False) -> list: ...
+
+
+@overload
+def lextend(xs: list, *elements: Any, cast: Literal[True]) -> list: ...
+
+
+@overload
+def lextend(xs: tuple, *elements: Any, cast: Literal[True]) -> tuple: ...
 
 
 def lextend(xs: Sequence, *elements: Any, cast: bool = False) -> list | tuple:
