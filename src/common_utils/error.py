@@ -6,12 +6,12 @@ def is_str_like(x: str | bytes) -> bool:
     return isinstance(x, (str, bytes))
 
 
-def make_error(name: str) -> Exception:
+def make_error(name: str) -> type[Exception]:
     def snake2camel(name: str) -> str:
         if "_" in name:
             name = name.split("_")
             name = [x.lstrip().rstrip().capitalize() for x in name]
-            name = ("").join(map(str.capitalize, name))
+            name = ("").join([x.capitalize() for x in name])
         else:
             return name
 
@@ -24,65 +24,45 @@ def make_error(name: str) -> Exception:
 
 
 def raise_error(
-    x: type | Exception | BaseException,
+    x: type[Exception] | Exception,
     msg: str | None = None,
 ) -> None:
-    if is_error(x):
-        if type(x) is type:
-            if is_str_like(msg):
-                raise x(msg)
-            else:
-                raise x()
-        elif is_error_instance(x):
-            if is_str_like(msg):
-                raise set_error_args(x, msg)
-            else:
-                raise x
+    if isinstance(x, Exception):
+        if msg is not None:
+            raise type(x)(msg)
+        else:
+            raise x
+    elif msg is not None:
+        raise x(msg)
     else:
-        raise Exception(dict(object=x, message=msg))
+        raise x
 
 
 def raise_unless(
-    cond: Callable | bool,
-    error: Exception | BaseException | type,
-    message: str | None = None,
+    cond: Callable[[], bool] | bool,
+    error: Exception | type[Exception],
+    msg: str | None = None,
 ) -> None:
-    if type(cond) is bool:
+    if isinstance(cond, bool):
         if not cond:
-            raise_error(error, msg=message)
+            raise_error(error, msg)
     elif not cond():
-        raise_error(error, msg=message)
+        raise_error(error, msg)
 
 
 def raise_when(
     cond: Callable | bool,
-    error: Exception | BaseException | type,
-    message: str | None = None,
+    error: Exception | type[Exception],
+    msg: str | None = None,
 ) -> None:
-    if type(cond) is bool:
+    if isinstance(cond, bool):
         if cond:
-            raise_error(error, msg=message)
+            raise_error(error, msg)
     elif cond():
-        raise_error(error, msg=message)
+        raise_error(error, msg)
 
 
-def is_error(x: any) -> bool:
-    if isinstance(x, BaseException):
-        return True
-    elif isinstance(x, Exception):
-        return True
-    elif type(x) is type:
-        if "Error" in x.__name__:
-            return True
-        elif "Exception" in x.__name__:
-            return True
-        else:
-            return False
-    else:
-        return False
-
-
-def error_args(error: Exception | BaseException) -> tuple | None:
+def error_args(error: Exception) -> tuple | None:
     if is_error_instance(error):
         args = error.args
         if len(args) == 0:
@@ -92,17 +72,17 @@ def error_args(error: Exception | BaseException) -> tuple | None:
 
 
 def set_error_args(
-    error: Exception | BaseException | type,
+    error: Exception | type[Exception],
     *args: Sequence,
-) -> Exception | BaseException | type | None:
+) -> Exception:
     if is_error_instance(error):
         error.args = tuple(args)
         return error
-    elif is_error_class(error):
+    else:
         return error(*args)
 
 
-def error_message(error: Exception | BaseException) -> str | tuple | None:
+def error_msg(error: Exception) -> str | tuple | None:
     if is_error_instance(error):
         args = error.args
         if len(args) == 0:
@@ -113,120 +93,77 @@ def error_message(error: Exception | BaseException) -> str | tuple | None:
             return args
 
 
-def set_error_message(
-    error: Exception | BaseException | type,
-    message: str,
-) -> Exception | BaseException:
+def set_error_msg(
+    error: Exception | type[Exception],
+    msg: str,
+) -> Exception:
     if is_error_instance(error):
         args = error.args
-        if len(args) == 1 and isinstance(type(args[0]), str):
+        if len(args) == 1 and isinstance(type(args[0]), (str, bytes)):
             args = list(args)
-            args[0] = message
+            args[0] = msg
             error.args = tuple(args)
             return error
         else:
-            error.args = (message,)
+            error.args = (msg,)
             return error
-    elif is_error_class(error):
-        return set_error_message(error(), message)
-
-
-def is_error_instance(error: Exception | BaseException) -> bool:
-    return isinstance(error, (BaseException, Exception))
-
-
-def is_error_type(error: Exception | BaseException) -> bool:
-    if is_error_instance(error):
-        return True
-    elif type(error) is not type:
-        return False
-    elif re.search(r"error|exception$", error.__name__, flags=re.I):
-        return True
-
-
-def is_error_class(error: Exception | BaseException) -> type | None:
-    if is_error_instance(error):
-        return False
-    elif is_error_type(error):
-        return error
     else:
-        return
+        return error(msg)
 
 
-def error_class(error: Exception | BaseException) -> type | None:
+def is_error_instance(error: any) -> bool:
+    return isinstance(error, Exception)
+
+
+def is_error(error: any) -> bool:
+    return is_error_instance(error) or is_error_class(error)
+
+
+def is_error_class(error: any) -> bool:
+    if is_error_instance(error):
+        return False
+    elif isinstance(error, type) and issubclass(error, Exception):
+        return True
+    else:
+        return False
+
+
+def error_class(error: Exception) -> type[Exception]:
     if is_error_instance(error):
         return type(error)
-    elif is_error_type(error):
-        return error
     else:
-        return
+        return error
 
 
-def as_error(error: Exception | BaseException | type) -> type:
-    return error_class(error)
-
-
-as_exception = as_error
-exception_args = error_args
 get_error_args = error_args
-get_exception_args = error_args
-set_exception_args = set_error_args
-is_exception_class = is_error_class
 get_error_class = error_class
-get_exception_class = error_class
-make_exception = make_error
-is_exception = is_error
-raise_exception = raise_error
-set_exception_message = set_error_message
-exception_message = error_message
-get_exception_message = error_message
-get_error_message = error_message
-exception_class = error_class
-is_exception_type = is_error_type
-is_exception_instance = is_error_instance
+get_error_msg = error_msg
 
 __all__ = [
     # Make error type
     "make_error",
-    "make_exception",
     #
     # Raise errors
     "raise_when",
     "raise_unless",
     "raise_error",
-    "raise_exception",
     #
     # Get error type
-    "as_error",
-    "as_exception",
     "error_class",
-    "exception_class",
-    "get_exception_class",
     "get_error_class",
     #
     # Check type | instance
     "is_error",
-    "is_error_type",
     "is_error_instance",
     "is_error_class",
-    "is_exception",
-    "is_exception_type",
-    "is_exception_instance",
-    "is_exception_class",
     #
     # Error message
-    "error_message",
-    "set_error_message",
-    "get_error_message",
-    "exception_message",
-    "set_exception_message",
-    "get_exception_message",
+    "error_msg",
+    "set_error_msg",
+    "get_error_msg",
     #
     # Error arguments
     "error_args",
     "get_error_args",
     "set_error_args",
-    "exception_args",
-    "set_exception_args",
-    "get_exception_args",
 ]

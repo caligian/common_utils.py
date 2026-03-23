@@ -1,10 +1,11 @@
+import csv
 import subprocess
 import shutil
 import os
 import re
 
 from glob import glob
-from typing import Callable
+from typing import Callable, overload, Literal
 from pickle import (
     load as fh_load_pkl,
     dump as fh_dump_pkl,
@@ -23,6 +24,7 @@ from json import (
 )
 from .table import split
 from .process import system
+from .result import Result, Ok, Err, T, E
 
 mkdir = os.makedirs
 is_dir = os.path.isdir
@@ -53,112 +55,150 @@ def has_extension(filename: str, *pattern: str | re.Pattern) -> bool:
     for pat in pattern:
         if re.search(pat, extension, flags=re.I):
             return True
-
     return False
 
 
-def read_json(filename: str) -> any:
+def read_json(filename: str) -> Result[list | dict, Exception]:
     with open(filename, "r") as fh:
-        return fh_load_json(fh)
+        try:
+            return Ok(fh_load_json(fh))
+        except Exception as error:
+            return Err(error)
 
 
-def write_json(filename: str, obj: any) -> bool:
+def write_json(filename: str, obj: any) -> Result[str, Exception]:
     with open(filename, "w") as fh:
-        fh_dump_json(obj, fh)
-        return True
+        try:
+            fh_dump_json(obj, fh)
+            return Ok(filename)
+        except Exception as error:
+            return Err(error, {"file": filename})
 
 
-def read_pkl(filename: str) -> any:
-    with open(filename, "rb") as fh:
-        return fh_load_pkl(fh)
+def read_pkl(filename: str) -> Result[any, Exception]:
+    try:
+        with open(filename, "rb") as fh:
+            return Ok(fh_load_pkl(fh))
+    except Exception as error:
+        return Err(error)
 
 
-def write_pkl(filename: str, obj: any) -> bool:
-    with open(filename, "wb") as fh:
-        fh_dump_pkl(obj, fh)
-        return True
+def write_pkl(filename: str, obj: any) -> Result[str, Exception]:
+    try:
+        with open(filename, "wb") as fh:
+            fh_dump_pkl(obj, fh)
+            return Ok(filename)
+    except Exception as error:
+        return Err(error, {"file": filename})
 
 
+# Do the same for pkl, json and other stuff
 def read_csv(
     filename: str,
-    read_all: bool = True,
+    everything: bool = True,
     **kwargs,
-) -> list[str]:
-    with open(filename) as fh:
-        if read_all:
-            return [line for line in csv_reader(fh, **kwargs)]
-        else:
-            return csv_reader(fh)
+) -> Result[list[list[str]] | csv.reader, Exception]:
+    try:
+        with open(filename) as fh:
+            if everything:
+                return Ok([line for line in csv_reader(fh, **kwargs)])
+            else:
+                return Ok(csv_reader(fh))
+    except Exception as error:
+        return Err(error)
 
 
 def write_csv(
     filename: str,
-    lines: str | list[str],
-    sep: str = r"\n",
+    lines: list[list[str]],
     **kwargs,
-) -> int:
-    with open(filename, "w") as fh:
-        writer = csv_writer(fh, **kwargs)
-        size = 0
-
-        if type(lines) is str and r"\n" in lines:
-            size = len(size)
-            lines = lines.split(r"\n")
-        elif type(lines) is list:
-            size = sum(map(len, lines))
-
-        writer.writerows(lines)
-        return size
+) -> Result[str, Exception]:
+    try:
+        with open(filename, "w") as fh:
+            writer = csv_writer(fh, **kwargs)
+            writer.writerows(lines)
+            return Ok(filename)
+    except Exception as error:
+        return Err(error, {"file": filename})
 
 
 def slurp(
     filename: str,
-    mode: str = "r",
     format: str = "text",
-    reader: Callable[[str | bytes], any] | None = None,
+    reader: Callable = None,
     newlines: bool = False,
     chomp: bool = True,
-) -> list[str] | str:
-    match format:
-        case ft if ft in ("json", "j"):
-            return read_json(filename)
-        case ft if ft in ("text", "txt", "t"):
-            with open(filename, mode) as fh:
-                text = fh.read()
-                text = chomp and text.strip() or text
-
-                if newlines:
-                    return text.split("\n")
-                else:
-                    return text
-        case ft if ft in ("pickle", "pkl", "p"):
-            return read_pkl(filename)
-        case reader if callable(reader):
-            return reader(filename)
-        case ft:
-            raise NotImplementedError(f"{ft} reader is not implemented")
+    binary: bool = False,
+) -> Result[any, Exception]:
+    if format in ("json", "j"):
+        return read_json(filename)
+    elif format in ("text", "txt", "t"):
+        if newlines:
+            return readlines(filename, binary=binary, chomp=chomp)
+        else:
+            return readtext(filename, binary=binary, chomp=chomp)
+    elif format in ("pickle", "pkl", "p"):
+        return read_pkl(filename)
+    elif callable(reader):
+        try:
+            return Ok(reader(filename))
+        except Exception as error:
+            return Err(error, dict(file=filename, reader=reader))
+    else:
+        return Err(
+            NotImplementedError(f"{format} reader is not implemented"),
+            {
+                "file": filename,
+                "format": format,
+                "reader": reader,
+                "binary": binary,
+            },
+        )
 
 
 def spit(
     filename: str,
     obj: any,
-    mode: str = "w",
     format: str = "text",
-) -> int:
-    match format:
-        case ft if ft in ("json", "j"):
-            return write_json(filename, obj)
-        case ft if ft in ("text", "txt", "t"):
-            with open(filename, mode) as fh:
-                obj = str(obj)
-                fh.write(obj)
-                return len(obj)
-        case ft if ft in ("pickle", "pkl", "p"):
-            return write_pkl(filename, obj)
-        case writer if callable(writer):
-            return writer(filename, obj)
-        case ft:
-            raise NotImplementedError(f"{ft} writer is not implemented")
+    writer: Callable[[any], str] | None = None,
+    binary: bool = False,
+    append_newline: bool = True,
+    encoding: str = "utf-8",
+    errors: str = "strict",
+) -> Result[str, Exception]:
+    if format in ("json", "j"):
+        return write_json(filename, obj)
+    elif format in ("text", "txt", "t"):
+        if isinstance(obj, (str, bytes)):
+            return writetext(
+                filename,
+                obj,
+                binary=binary,
+                append_newline=append_newline,
+                encoding=encoding,
+                errors=errors,
+            )
+        else:
+            return writelines(
+                filename,
+                obj,
+                binary=binary,
+                append_newline=append_newline,
+                encoding=encoding,
+                errors=errors,
+            )
+    elif format in ("pickle", "pkl", "p"):
+        return write_pkl(filename, obj)
+    elif writer:
+        try:
+            return Ok(writer(filename, obj))
+        except Exception as error:
+            return Err(error, dict(file=filename))
+    else:
+        return Err(
+            NotImplementedError(f"{format} writer is not implemented"),
+            {"file": filename, "writer": writer, "format": format},
+        )
 
 
 def ls(
@@ -168,10 +208,13 @@ def ls(
     include: str = "dflmj",
     stat: bool = False,
     follow_symlinks: bool = False,
-) -> list[str] | list[tuple[str, os.stat_result]]:
-    pattern = re.compile(pattern, flags=re.I + re.M)
+) -> None | list[str] | list[tuple[str, os.stat_result]]:
+    if not os.path.isdir(d):
+        return
+
+    pattern = re.compile(pattern, flags=re.I | re.M)
     files: list[str] = glob(f"{d}/*") + glob(f"{d}/.*")
-    exclude = exclude and re.compile(exclude, flags=re.I + re.M) or None
+    exclude = exclude and re.compile(exclude, flags=re.I | re.M) or None
     files = [x for x in files if pattern.search(x)]
 
     if exclude:
@@ -204,63 +247,253 @@ def ls(
 
 
 def mimetype(filename: str) -> str | None:
-    out = subprocess.check_output(["file", "--mime-encoding", filename])
-    out = out.decode()
-    out = out.split(":")
-    out = out[-1]
-    out = out.strip()
+    try:
+        out = subprocess.check_output(["file", "--mime-encoding", filename])
+        out = out.decode()
+        out = out.split(":")
+        out = out[-1]
+        out = out.strip()
 
-    if "cannot open" in out[:12]:
+        if "cannot open" in out[:12]:
+            return
+
+        return out
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return
+    except Exception:
         return
 
-    return out
 
+def cp(
+    src: str,
+    dest: str,
+    makedirs: bool = False,
+    overwrite: bool = True,
+    **kwargs,
+) -> Result[str, PermissionError | FileNotFoundError | OSError | FileExistsError]:
+    if not os.path.exists(src):
+        return Err(FileNotFoundError(src), dict(src=src))
 
-def cp(src: str, dest: str, **kwargs) -> str:
-    if os.path.isdir(src):
-        shutil.copytree(src, dest, **kwargs)
+    if os.path.exists(dest) and not overwrite:
+        return Err(FileExistsError(dest), dict(dest=dest))
+
+    dirname = os.path.dirname(dest)
+    if not makedirs:
+        if not os.path.exists(dirname):
+            return Err(FileNotFoundError(dirname), dict(dest_dir=dirname, dest=dest))
     else:
-        shutil.copy(src, dest, **kwargs)
+        try:
+            os.makedirs(dirname)
+        except Exception as error:
+            return Err(error, {"dest_dir": dirname, "dest": dest})
 
-    return dest
+    try:
+        if os.path.isdir(src):
+            shutil.copytree(src, dest, **kwargs)
+        else:
+            shutil.copy(src, dest, **kwargs)
+
+        return Ok(dest)
+    except Exception as error:
+        return Err(error, dict(src=src, dest=dest))
 
 
-def rm(path: str, **kwargs) -> bool:
+def rm(path: str, **kwargs) -> Result[str, Exception]:
     if not os.path.exists(path):
-        return False
+        return Err(FileNotFoundError(path), {"path": path})
     elif os.path.isdir(path):
-        shutil.rmtree(path, **kwargs)
-    else:
-        os.remove(path, **kwargs)
+        try:
+            shutil.rmtree(path, **kwargs)
+            return Ok(path)
+        except Exception as error:
+            return Err(error, {"path": path})
 
-    return True
+    try:
+        os.unlink(path)
+        return Ok(path)
+    except Exception as error:
+        return Err(error, {"path": path})
 
 
-def readlines(filename: str) -> list[str]:
-    return slurp(filename, newlines=True)
+def readlines(
+    filename: str,
+    binary: bool = False,
+    chomp: bool = False,
+) -> Result[list[str] | list[bytes], Exception]:
+    mode = "rb" if binary else "r"
+    try:
+        with open(filename, mode) as fh:
+            if not chomp:
+                return Ok(fh.readlines())
+            else:
+                return Ok([x.rstrip(b"\n\r") for x in fh.readlines()])
+    except Exception as error:
+        return Err(error)
+
+
+def readtext(
+    filename: str,
+    binary: bool = False,
+    chomp: bool = True,
+) -> Result[str | bytes, Exception]:
+    mode = "rb" if binary else "r"
+    try:
+        with open(filename, mode) as fh:
+            if not chomp:
+                return Ok(fh.read())
+            else:
+                return Ok(fh.read().rstrip(b"\n\r"))
+    except Exception as error:
+        return Err(error)
+
+
+@overload
+def writetext(
+    filename: str,
+    text: str,
+    binary: Literal[False] = False,
+    append_newline: bool = True,
+    encoding: str = "utf-8",
+    errors: str = "strict",
+) -> Result[str, Exception]: ...
+
+
+@overload
+def writetext(
+    filename: str,
+    text: bytes,
+    binary: Literal[True],
+    append_newline: bool = True,
+    encoding: str = "utf-8",
+    errors: str = "strict",
+) -> Result[str, Exception]: ...
+
+
+def writetext(
+    filename: str,
+    text: str | bytes,
+    binary: bool = False,
+    append_newline: bool = True,
+    encoding: str = "utf-8",
+    errors: str = "strict",
+) -> Result[str, Exception]:
+    mode = "w"
+    use = text
+
+    if binary:
+        mode = "wb"
+        if not isinstance(text, bytes):
+            try:
+                use = text.encode(encoding, errors=errors)
+            except Exception as error:
+                return Err(
+                    error,
+                    {
+                        "file": filename,
+                        "binary": binary,
+                        "encoding": encoding,
+                        "errors": errors,
+                    },
+                )
+    elif not isinstance(text, str):
+        try:
+            use = text.decode(encoding=encoding, errors=errors)
+        except Exception as error:
+            return Err(
+                error,
+                dict(file=filename, binary=binary, encoding=encoding, errors=errors),
+            )
+
+    try:
+        with open(filename, mode) as fh:
+            fh.write(use)
+            if append_newline:
+                if not binary:
+                    fh.write("\n")
+                else:
+                    fh.write(b"\n")
+
+            return Ok(filename)
+    except Exception as error:
+        return Err(
+            error, dict(file=filename, binary=binary, encoding=encoding, errors=errors)
+        )
+
+
+@overload
+def writelines(
+    filename: str,
+    text: list[str],
+    binary: Literal[False] = False,
+    append_newline: bool = True,
+    encoding: str = "utf-8",
+    errors: str = "strict",
+) -> Result[str, Exception]: ...
+
+
+@overload
+def writelines(
+    filename: str,
+    text: list[bytes],
+    binary: Literal[True],
+    append_newline: bool = True,
+    encoding: str = "utf-8",
+    errors: str = "strict",
+) -> Result[str, Exception]: ...
 
 
 def writelines(
     filename: str,
-    *text: list[str],
+    text: list[str] | list[bytes],
     binary: bool = False,
     append_newline: bool = True,
-) -> int:
-    mode = 'w'
-    if binary:
-        mode = 'wb'
-        
-    with open(filename, mode) as fh:
-        size = 0
-        for line in text:
-            if append_newline:
-                fh.write(line + "\n")
-                size += len(line) + 1
-            else:
-                fh.write(line)
-                size += len(line)
+    encoding: str = "utf-8",
+    errors: str = "strict",
+) -> Result[str, Exception]:
+    lines = text
+    mode = "w"
 
-        return size
+    if binary:
+        mode = "wb"
+        if len(text) > 0 and isinstance(text[0], str):
+            try:
+                lines = [x.encode(encoding, errors) for x in text]
+            except Exception as error:
+                return Err(
+                    error,
+                    dict(
+                        file=filename, binary=binary, encoding=encoding, errors=errors
+                    ),
+                )
+    elif len(text) > 0 and isinstance(text[0], bytes):
+        try:
+            lines = [x.decode(encoding, errors) for x in text]
+        except Exception as error:
+            return Err(
+                error,
+                dict(file=filename, binary=binary, encoding=encoding, errors=errors),
+            )
+
+    try:
+        with open(filename, mode) as fh:
+            for line in lines:
+                fh.write(line)
+                if append_newline:
+                    if binary:
+                        fh.write(b"\n")
+                    else:
+                        fh.write("\n")
+            return Ok(filename)
+    except Exception as error:
+        return Err(
+            error,
+            dict(
+                file=filename,
+                encoding=encoding,
+                errors=errors,
+                binary=binary,
+            ),
+        )
 
 
 def whereis(binary: str) -> list[str] | None:
@@ -284,8 +517,6 @@ __all__ = [
     "csv_writer",
     "dirname",
     "dump_json",
-    "dump_json",
-    "dump_pkl",
     "dump_pkl",
     "exists",
     "fh_dump_json",
