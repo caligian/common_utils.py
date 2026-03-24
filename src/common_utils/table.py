@@ -12,9 +12,16 @@ from .error import (
 Pattern = re.Pattern
 Container = list | tuple | dict
 Sequence = list | tuple
-Reducer = Callable[[int | str, Any, Any], Any] | Callable[[Any, Any], Any]
-Transformer = Callable[[int | str, Any], Any] | Callable[[Any], Any]
-Filter = Callable[[int | str, Any], bool] | Callable[[Any], bool]
+ReducerWithIndex = Callable[[int | str, Any, Any], Any]
+TransformerWithIndex = Callable[[Any], Any]
+FilterWithIndex = Callable[[Any], bool]
+ReducerWithoutIndex = Callable[[Any, Any], Any]
+TransformerWithoutIndex = Callable[[Any], Any]
+FilterWithoutIndex = Callable[[Any], bool]
+Reducer = ReducerWithIndex | ReducerWithoutIndex
+Transformer = TransformerWithIndex | TransformerWithoutIndex
+Filter = FilterWithIndex | FilterWithoutIndex
+
 
 
 @overload
@@ -49,13 +56,9 @@ def treduce(
 ) -> Any:
     if fn is None:
         if index:
-
-            def fn(k, elem, acc):
-                return acc
+            fn = lambda k, elem, acc: acc
         else:
-
-            def fn(elem, acc):
-                return acc
+            fn = lambda elem, acc: acc
 
     def check(v) -> bool:
         if isinstance(v, Exception):
