@@ -39,11 +39,6 @@ dirname = os.path.dirname
 abspath = os.path.abspath
 stat = os.stat
 cpstat = shutil.copystat
-isdir = is_dir
-isfile = is_file
-ismount = is_mount
-isjunction = is_junction
-ispath = exists
 
 
 def file_extension(filename: str) -> str:
@@ -530,11 +525,6 @@ __all__ = [
     "is_junction",
     "is_link",
     "is_mount",
-    "isdir",
-    "isfile",
-    "isjunction",
-    "ismount",
-    "ispath",
     "load_json",
     "load_json",
     "load_pkl",

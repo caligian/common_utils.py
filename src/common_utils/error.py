@@ -26,14 +26,23 @@ def make_error(name: str) -> type[Exception]:
 def raise_error(
     x: type[Exception] | Exception,
     msg: str | None = None,
+    args: list | tuple | dict | None = None,
 ) -> None:
     if isinstance(x, Exception):
-        if msg is not None:
+        if msg and args:
+            raise type(x)((msg, args))
+        elif msg is not None:
             raise type(x)(msg)
+        elif args is not None:
+            raise type(x)(args)
         else:
             raise x
+    elif msg and args:
+        raise x((msg, args))
     elif msg is not None:
         raise x(msg)
+    elif args is not None:
+        raise x(args)
     else:
         raise x
 
@@ -42,24 +51,28 @@ def raise_unless(
     cond: Callable[[], bool] | bool,
     error: Exception | type[Exception],
     msg: str | None = None,
+    args: str | None = None,
 ) -> None:
-    if isinstance(cond, bool):
-        if not cond:
-            raise_error(error, msg)
-    elif not cond():
-        raise_error(error, msg)
+    match callable(cond):
+        case True:
+            raise_error(error, msg, args)
+        case False:
+            if not cond:
+                raise_error(error, msg, args)
 
 
 def raise_when(
-    cond: Callable | bool,
+    cond: Callable[[], bool] | bool,
     error: Exception | type[Exception],
     msg: str | None = None,
+    args: str | None = None,
 ) -> None:
-    if isinstance(cond, bool):
-        if cond:
-            raise_error(error, msg)
-    elif cond():
-        raise_error(error, msg)
+    match callable(cond):
+        case True:
+            raise_error(error, msg, args)
+        case _:
+            if not cond:
+                raise_error(error, msg, args)
 
 
 def error_args(error: Exception) -> tuple | None:

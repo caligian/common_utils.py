@@ -2,6 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import (
     Self,
+    Any,
     Callable,
     Generic,
     TypeVar,
@@ -269,16 +270,16 @@ def rpcall(
         return Err(error)
 
 
-def is_result(obj: ResultBase) -> bool:
+def is_result(obj: Any) -> bool:
     return isinstance(obj, ResultBase)
 
 
-def is_ok(obj: ResultBase) -> bool:
-    return obj.is_ok()
+def is_ok(obj: Any) -> bool:
+    return isinstance(obj, Ok)
 
 
-def is_err(obj: ResultBase) -> bool:
-    return obj.is_err()
+def is_err(obj: Any) -> bool:
+    return isinstance(obj, Err)
 
 
 def rifelse(

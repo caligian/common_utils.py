@@ -1,10 +1,13 @@
 import re
+import copy
 
 from typing import Callable, overload, Any, Literal
 from pyfzf import FzfPrompt
 from functools import reduce
+from math import ceil
 from .result import Ok, Err, Result, T, E
 from .error import (
+    error_msg,
     raise_error,
     is_error,
 )
@@ -22,6 +25,100 @@ Reducer = ReducerWithIndex | ReducerWithoutIndex
 Transformer = TransformerWithIndex | TransformerWithoutIndex
 Filter = FilterWithIndex | FilterWithoutIndex
 
+deepcopy = copy.deepcopy
+shallowcopy = copy.copy
+
+
+def empty_table(x_type: type[list | dict | tuple]) -> list | dict | tuple:
+    if x_type is list:
+        return []
+    elif x_type is dict:
+        return dict()
+    else:
+        return tuple()
+
+
+@overload
+def table(
+    x_type: type[dict],
+    size: int | None = None,
+    index: list[int | str] | None = None,
+    values: list[Any] | None = None,
+) -> dict: ...
+
+
+@overload
+def table(
+    x_type: type[list | tuple],
+    size: int | None = None,
+    index: list[int | str] | None = None,
+    values: list[Any] | None = None,
+) -> list | tuple: ...
+
+
+def table(
+    x_type: type[list | dict | tuple],
+    size: int | None = None,
+    index: list[int | str] | None = None,
+    values: list[Any] | None = None,
+    default: Any | None = None,
+    default_factory: Callable[[], Any] | None = None,
+) -> list | dict | tuple:
+    size_given = size is not None
+
+    if x_type is dict:
+        res = {}
+        if size_given and index and values:
+            raise AssertionError(
+                "Cannot pass size_given, index and value with dict input"
+            )
+        elif size_given and not (index and values):
+            for i in range(size):
+                if default_factory:
+                    res[i] = default_factory()
+                else:
+                    res[i] = default
+        elif (size_given and index) and not values:
+            assert len(index) == size
+            for i in range(size):
+                if default_factory:
+                    res[index[i]] = default_factory()
+                else:
+                    res[index[i]] = default
+        elif size_given and values:
+            assert len(index) == size
+            for i in range(size):
+                if default_factory:
+                    res[i] = values[i]
+                else:
+                    res[i] = values[i]
+        elif index and values:
+            assert len(index) == len(values)
+            return dict(zip(index, values))
+        elif index:
+            for i in index:
+                if default_factory:
+                    res[i] = default_factory()
+                else:
+                    res[i] = default
+        elif values:
+            for i, x in enumerate(values):
+                res[i] = x
+
+        return res
+    elif index or values:
+        raise AssertionError("Cannot pass index and/or value with non-dict input")
+    elif size == 0:
+        return empty_table(x_type)
+    elif size:
+        res = [(default_factory() if default_factory else default) for _ in range(size)]
+
+        if x_type is tuple:
+            return tuple(res)
+        else:
+            return res
+    else:
+        return empty_table()
 
 
 @overload
@@ -395,7 +492,7 @@ def tset(
         return xs
 
     for k, v in keys_and_values:
-        match assoc(xs, k, value=v):
+        match assoc(xs, k, value=v, set=True):
             case Ok():
                 continue
             case Err(error):
@@ -407,12 +504,30 @@ def tset(
     return xs
 
 
+@overload
+def assoc(
+    d: dict,
+    ks: int | str | list[int | str],
+    value: Any = None,
+    set: bool = False,
+) -> Result[Any, KeyError]: ...
+
+
+@overload
+def assoc(
+    d: list | tuple,
+    ks: int | str | list[int | str],
+    value: Any = None,
+    set: bool = False,
+) -> Result[Any, IndexError]: ...
+
+
 def assoc(
     d: Container,
     ks: int | str | list[int | str],
     value: Any = None,
     set: bool = False,
-) -> Result[T, E]:
+) -> Result[Any, KeyError | IndexError]:
     ks = [ks] if not sequence(ks) else ks
     v = d
 
@@ -454,7 +569,7 @@ def container(xs: dict | list | tuple) -> bool:
     return isinstance(xs, (tuple, int, dict))
 
 
-def flatten(xs: list | tuple, maxdepth: int = -1) -> list:
+def flatten(xs: list | tuple, maxdepth: int = -1) -> list | tuple:
     result = []
 
     def vector(lst: list | tuple, current_depth: int = 0) -> list:
@@ -470,7 +585,10 @@ def flatten(xs: list | tuple, maxdepth: int = -1) -> list:
                 result.append(x)
 
     vector(xs, 0)
-    return result
+    if isinstance(xs, tuple):
+        return tuple(result)
+    else:
+        return result
 
 
 def paste0(
@@ -511,8 +629,17 @@ def push(
     return cls(xs)
 
 
-def reverse(xs: tuple | list | str) -> tuple | list | str:
-    return xs[::-1]
+def reverse(xs: dict | tuple | list | str) -> tuple | list | str:
+    if isinstance(xs, dict):
+        keys = tkeys(xs)
+        res = {}
+
+        for k in keys[::-1]:
+            res[k] = xs[k]
+
+        return res
+    else:
+        return xs[::-1]
 
 
 def unpush(xs: Sequence, *elements: Any) -> Sequence:
@@ -521,25 +648,37 @@ def unpush(xs: Sequence, *elements: Any) -> Sequence:
 
 @overload
 def extend(
-    xs: list, *elements: Any, index: int | None = None, cast: Literal[False] = False
+    xs: list,
+    *elements: Any,
+    index: int | None = None,
+    cast: Literal[False] = False,
 ) -> list: ...
 
 
 @overload
 def extend(
-    xs: tuple, *elements: Any, index: int | None = None, cast: Literal[False] = False
+    xs: tuple,
+    *elements: Any,
+    index: int | None = None,
+    cast: Literal[False] = False,
 ) -> list: ...
 
 
 @overload
 def extend(
-    xs: list, *elements: Any, index: int | None = None, cast: Literal[True]
+    xs: list,
+    *elements: Any,
+    index: int | None = None,
+    cast: Literal[True],
 ) -> list: ...
 
 
 @overload
 def extend(
-    xs: tuple, *elements: Any, index: int | None = None, cast: Literal[True]
+    xs: tuple,
+    *elements: Any,
+    index: int | None = None,
+    cast: Literal[True],
 ) -> tuple: ...
 
 
@@ -575,18 +714,34 @@ def extend(
 
 
 @overload
-def lextend(xs: tuple, *elements: Any, cast: Literal[False] = False) -> list: ...
+def lextend(
+    xs: tuple,
+    *elements: Any,
+    cast: Literal[False] = False,
+) -> list: ...
 
 
 @overload
-def lextend(xs: list, *elements: Any, cast: Literal[True]) -> list: ...
+def lextend(
+    xs: list,
+    *elements: Any,
+    cast: Literal[True],
+) -> list: ...
 
 
 @overload
-def lextend(xs: tuple, *elements: Any, cast: Literal[True]) -> tuple: ...
+def lextend(
+    xs: tuple,
+    *elements: Any,
+    cast: Literal[True],
+) -> tuple: ...
 
 
-def lextend(xs: Sequence, *elements: Any, cast: bool = False) -> list | tuple:
+def lextend(
+    xs: Sequence,
+    *elements: Any,
+    cast: bool = False,
+) -> list | tuple:
     cls = type(xs)
     xs = list(xs)
 
@@ -606,85 +761,144 @@ def identity(element: Any) -> Any:
     return element
 
 
+@overload
 def pop(
-    xs: list | dict,
+    xs: list | tuple,
     index: int | str = -1,
     default: Any | None = None,
     default_factory: Callable | None = None,
     pcall: bool = False,
-) -> Any | KeyError | IndexError:
-    if isinstance(xs, dict) and isinstance(index, int):
+) -> Result[Any, IndexError]: ...
+
+
+@overload
+def pop(
+    xs: dict,
+    index: int | str = -1,
+    default: Any | None = None,
+    default_factory: Callable | None = None,
+    pcall: bool = False,
+) -> Result[Any, KeyError]: ...
+
+
+def pop(
+    xs: Container,
+    index: int | str = -1,
+    default: Any | None = None,
+    default_factory: Callable | None = None,
+    pcall: bool = False,
+) -> Result[Any, KeyError | IndexError]:
+    ys: list
+    if isinstance(xs, tuple):
+        ys = list(xs)
+    else:
+        ys = xs
+
+    metadata = dict(x=xs, index=index)
+    if isinstance(ys, dict) and isinstance(index, int):
         try:
-            index = list(xs.keys())[index]
+            index = list(ys.keys())[index]
         except (IndexError, KeyError) as error:
             if default_factory:
-                return default_factory()
+                return Ok(default_factory(), metadata)
             elif default is not None:
-                return default
+                return Ok(default, metadata)
             elif pcall:
-                return error
+                return Err(error, metadata)
             else:
-                raise error
+                raise_error(error, msg=error_msg(error), args=metadata)
 
     try:
-        return xs.pop(index)
+        return Ok(ys.pop(index), metadata)
     except (IndexError, KeyError) as error:
         if default_factory:
-            return default_factory()
+            return Ok(default_factory(), metadata)
         elif default is not None:
-            return default
+            return Ok(default, metadata)
         elif pcall:
-            return error
+            return Err(error, metadata)
         else:
-            raise error
+            raise_error(error, msg=error_msg(error), args=metadata)
+
+
+@overload
+def shift(
+    xs: dict,
+    default: Any | None = None,
+    default_factory: Callable | None = None,
+    pcall: bool = False,
+) -> Result[Any, KeyError]: ...
+
+
+@overload
+def shift(
+    xs: list | tuple,
+    default: Any | None = None,
+    default_factory: Callable | None = None,
+    pcall: bool = False,
+) -> Result[Any, IndexError]: ...
 
 
 def shift(
-    xs: list,
-    default: Callable | None = None,
+    xs: Container,
+    default: Any | None = None,
+    default_factory: Callable | None = None,
     pcall: bool = False,
-) -> list:
+) -> Result[Any, KeyError | IndexError]:
     return pop(
         xs,
         index=0,
         default=default,
+        default_factory=default_factory,
         pcall=pcall,
     )
 
 
 def popn(
-    xs: list,
+    xs: Container,
     n: int = 1,
     index: int | str = -1,
     reverse: bool = False,
     pcall: bool = False,
-    default: Callable | None = None,
-) -> list[Any]:
+    default_factory: Callable | None = None,
+    default: Any | None = None,
+) -> Result[list[Any], KeyError | IndexError]:
     res = []
     for i in range(n):
-        res.append(
-            pop(
-                xs,
-                index=index,
-                default=default,
-                pcall=pcall,
-            )
-        )
+        match pop(
+            xs,
+            index=index,
+            default=default,
+            default_factory=default_factory,
+            pcall=pcall,
+        ):
+            case Ok(value):
+                res.append(value)
+            case Err() as err:
+                if not pcall:
+                    raise_error(
+                        err.value,
+                        msg=error_msg(err.value),
+                        args=err.metadata,
+                    )
+                else:
+                    return err
 
+    metadata = dict(x=xs, index=index, n=n)
     if reverse:
-        return res[::-1]
+        return Ok(res[::-1], metadata)
     else:
-        return res
+        return Ok(res, metadata)
 
 
 def shiftn(
-    xs: list,
+    xs: list | tuple | dict,
     n: int = 1,
     index: int = -1,
     reverse: bool = False,
     pcall: bool = False,
     default: Callable | None = None,
-) -> list[Any]:
+) -> Result[list[Any], IndexError | KeyError | ValueError]:
     return popn(
         xs,
         n,
@@ -777,43 +991,129 @@ def grep(
                 for p in pattern:
                     if re.search(p, v, **kwargs) and not invert:
                         res[k] = v
+                        break
 
         return res
-    else:
-        assert isinstance(x, (list, tuple))
 
-        res = []
-        dst_type = type(x)
+    res = []
+    dst_type = type(x)
 
-        for elem in x:
-            if isinstance(elem, str):
-                for p in pattern:
-                    if re.search(p, elem, **kwargs) and not invert:
-                        res.append(elem)
+    for elem in x:
+        if isinstance(elem, str):
+            for p in pattern:
+                if re.search(p, elem, **kwargs) and not invert:
+                    res.append(elem)
+                    break
 
-        return dst_type(res)
+    return dst_type(res)
 
 
 def grepv(x: Container, *pattern, **kwargs) -> Container:
     return grep(x, *pattern, invert=True, **kwargs)
 
 
-def car(x: Sequence) -> Any:
+def cut(x: Container, start: int = 0, end: int = None, step: int = 1) -> Container:
+    x_len = len(x)
+    end = x_len if end is None else end
+    end = (x_len + end) if end < 0 else end
+    start = (x_len + start) if start < 0 else start
+
+    if start < 0 or end < 0 or start > end or start > x_len or end > x_len:
+        raise_error(IndexError, args=dict(x=x, start=start, end=end))
+
+    if not isinstance(x, dict):
+        return x[start:end:step]
+    else:
+        ks = tuple(x.keys())
+        res = {}
+
+        for k in ks[start:end:step]:
+            res[k] = x[k]
+
+        return res
+
+
+@overload
+def partition(
+    x: Container, n: Container[[int | str], bool]
+) -> tuple[dict | list, dict | list]: ...
+
+
+@overload
+def partition(x: Container, n: int) -> list[Container]: ...
+
+
+def partition(
+    x: Container,
+    n: int | Callable[[int | str, Any], bool],
+) -> list[Container] | tuple[dict | list, dict | list]:
+    is_dict = isinstance(x, dict)
+    if not is_dict and callable(n):
+        res = ([], [])
+        for elem in x:
+            if not n(elem):
+                res[1].append(elem)
+            else:
+                res[0].append(elem)
+
+        return res
+    elif not is_dict:
+        return chunk(x, ceil(len(x) / n))
+
+    ks = tuple(x.keys())
+    partitioned = partition(ks, n)
+    res = []
+
+    for ks in partitioned:
+        res.append(dict(zip(ks, [x[k] for k in ks])))
+
+    return res
+
+
+def chunk(x: Container, chunk_size: int) -> list[Container]:
+    if isinstance(x, dict):
+        ks = tuple(x.keys())
+        chunked = chunk(ks, chunk_size=chunk_size)
+        return [dict(zip(ks, [x[k] for k in ks])) for ks in chunked]
+
+    res = []
+    for i in range(0, len(x), chunk_size):
+        res.append(x[i : i + chunk_size])
+
+    return res
+
+
+def car(x: Container) -> Any | None:
+    if isinstance(x, dict):
+        try:
+            return x[tuple(x.keys())[0]]
+        except Exception:
+            return
+
     try:
         return x[0]
     except Exception:
         return
 
 
-def cdr(x: Sequence) -> Sequence:
-    return x[1:]
+def cdr(x: Container) -> Sequence:
+    return cut(x, start=1)
 
 
-def butlast(x: Sequence) -> Any:
-    return x[: len(x) - 1]
+def butlast(x: Container) -> Any:
+    is_dict = isinstance(x, dict)
+    if len(x) < 1:
+        if is_dict:
+            return {}
+        elif isinstance(x, tuple):
+            return tuple()
+        else:
+            return []
+
+    return cut(x, end=-1)
 
 
-def head(x: Sequence, n: int = 1) -> Sequence:
+def head(x: Container, n: int = 1) -> Sequence:
     assert n >= 0
     if len(x) <= n:
         return x
@@ -1017,3 +1317,25 @@ __all__ = [
     "tsome",
     "unpush",
 ]
+
+
+def _test():
+    print(table(list, size=10))
+    print("---")
+    print(table(dict, size=10))
+    print("---")
+    print(
+        table(
+            dict,
+            size=20,
+            default=True,
+        )
+    )
+    print(cut(table(list, size=10), 0, -2))
+    print(cut(table(dict, size=10), 0, -2, 2))
+    print(chunk(table(dict, size=11), 2))
+    print(partition(table(dict, size=15), 3))
+    print(partition(table(tuple, size=19), 2))
+
+
+# _test()
