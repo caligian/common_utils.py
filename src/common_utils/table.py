@@ -44,6 +44,8 @@ def table(
     size: int | None = None,
     index: list[int | str] | None = None,
     values: list[Any] | None = None,
+    default: Any | None = None,
+    default_factory: Callable[[], Any] | None = None,
 ) -> dict: ...
 
 
@@ -53,6 +55,8 @@ def table(
     size: int | None = None,
     index: list[int | str] | None = None,
     values: list[Any] | None = None,
+    default: Any | None = None,
+    default_factory: Callable[[], Any] | None = None,
 ) -> list | tuple: ...
 
 
@@ -136,18 +140,18 @@ def treduce(
 def treduce(
     tbl,
     init,
-    fn: Callable[[int | str, Any, Any], Any],
-    index=True,
+    fn: ReducerWithIndex,
+    index: Literal[True] = True,
     ignore_errors=True,
     raise_on_error=False,
-): ...
+) -> Any: ...
 
 
 def treduce(
     tbl: Container,
-    init: Any | None = None,
-    fn: Reducer | None = None,
-    index: bool = False,
+    init: Any,
+    fn: ReducerWithoutIndex,
+    index: Literal[False] = False,
     ignore_errors: bool = True,
     raise_on_error: bool = False,
 ) -> Any:
@@ -181,34 +185,29 @@ def treduce(
     return res
 
 
-def tsome(x: Container) -> bool:
-    if isinstance(x, dict):
-        for value in x.values():
-            if value:
-                return True
-    else:
-        for value in x:
-            if value:
-                return True
-
+def tsome(
+    x: Container,
+    cond: Callable[[Any], bool] = lambda x: True if x else False,
+) -> bool:
+    it = x.values() if isinstance(x, dict) else x
+    for value in it:
+        if cond(value):
+            return True
     return False
 
 
-def tall(x: Container) -> bool:
-    if isinstance(x, dict):
-        for value in x.values():
-            if not value:
-                return False
-        return True
-    else:
-        assert isinstance(x, (tuple, list))
-        for value in x:
-            if not value:
-                return False
-        return True
+def tall(
+    x: Container,
+    cond: Callable[[Any], bool] = lambda x: True if x else False,
+) -> bool:
+    it = x.values() if isinstance(x, dict) else x
+    for value in it:
+        if not cond(value):
+            return False
+    return True
 
 
-def tblank(s: str | list | tuple | dict) -> bool:
+def tblank(s: str | list | tuple | dict | set) -> bool:
     return len(s) == 0
 
 
@@ -236,7 +235,7 @@ def tvalues(xs: Container) -> list[Any]:
 @overload
 def tfor(
     tbl,
-    index=False,
+    index: Literal[False] = False,
     apply: Callable[[Any], Any] | None = None,
     keep: Callable[[Any], bool] | None = None,
     exclude: Callable[[Any], bool] | None = None,
@@ -251,7 +250,7 @@ def tfor(
 @overload
 def tfor(
     tbl,
-    index=True,
+    index: Literal[True] = True,
     apply: Callable[[int | str, Any], Any] | None = None,
     keep: Callable[[int | str, Any], bool] | None = None,
     exclude: Callable[[int | str, Any], bool] | None = None,
@@ -348,7 +347,7 @@ def tkeep(
     tbl,
     f: Callable[[Any], bool],
     exclude: Callable[[Any], bool] | None = None,
-    index=False,
+    index: Literal[False] = False,
 ) -> Container: ...
 
 
@@ -365,7 +364,7 @@ def tkeep(
     tbl: Container,
     f: Filter,
     exclude: Filter | None = None,
-    index: bool = False,
+    index: Literal[False] = False,
     ignore_errors: bool = False,
     raise_on_error: bool = False,
 ) -> Container:
@@ -417,17 +416,17 @@ def texclude(
 
 @overload
 def tapply(
-    tbl,
+    tbl: Container,
     f: Callable[[Any], bool],
-    index=False,
+    index: Literal[False] = False,
 ) -> Container: ...
 
 
 @overload
 def tapply(
-    tbl,
+    tbl: Container,
     f: Callable[[int | str, Any], bool] = None,
-    index=True,
+    index: Literal[True] = True,
 ) -> Container: ...
 
 
@@ -467,18 +466,41 @@ def tget(
     return res
 
 
+@overload
+def thas(
+    xs: Container,
+    *ks: int | str | list[int, str],
+    index: Literal[False] = False,
+) -> list[bool]: ...
+
+
+@overload
+def thas(
+    xs: Container,
+    *ks: int | str | list[int, str],
+    index: Literal[True] = True,
+) -> list[tuple[int | str | list[int | str], bool]]: ...
+
+
 def thas(
     xs: Container,
     *ks: int | str | list[int | str],
-) -> list[bool]:
+    index: bool = False,
+) -> list[tuple[int | str | list[int | str]], bool] | list[bool]:
     res = []
 
     for k in ks:
         match assoc(xs, k):
             case Ok():
-                res.append(True)
+                if index:
+                    res.append((k, True))
+                else:
+                    res.append(True)
             case Err():
-                res.append(False)
+                if index:
+                    res.append((k, False))
+                else:
+                    res.append(False)
 
     return res
 
@@ -962,36 +984,96 @@ def splitlines(
 def strmatch(
     s: str,
     *pattern: str | Pattern,
-    invert: bool = False,
     **kwargs,
 ) -> re.Match | None:
-    for pat in pattern:
+    for pat in flatten(pattern, -1):
         if m := re.search(pat, s, **kwargs):
-            if invert:
-                return False
-            else:
-                return m
+            return m
 
-    if invert:
-        return False
-    else:
-        return True
+
+@overload
+def grep(
+    x: list[T],
+    *pattern: str | Pattern,
+    value: Literal[True] = False,
+    invert: Literal[False] = False,
+    **kwargs,
+) -> list[T]: ...
+
+
+@overload
+def grep(
+    x: dict[str, T],
+    *pattern: str | Pattern,
+    value: Literal[True] = False,
+    invert: Literal[False] = False,
+    **kwargs,
+) -> dict[str, T | None]: ...
+
+
+@overload
+def grep(
+    x: list[T],
+    *pattern: str | Pattern,
+    value: Literal[False] = False,
+    invert: Literal[True] = False,
+    **kwargs,
+) -> list[bool]: ...
+
+
+@overload
+def grep(
+    x: dict[str, T],
+    *pattern: str | Pattern,
+    value: Literal[False] = False,
+    invert: Literal[True] = False,
+    **kwargs,
+) -> dict[str, bool]: ...
+
+
+@overload
+def grep(
+    x: dict[str, T],
+    *pattern: str | Pattern,
+    value: Literal[True] = False,
+    invert: Literal[False] = False,
+    **kwargs,
+) -> dict[str, T | None]: ...
+
+
+@overload
+def grep(
+    x: tuple,
+    *pattern: str | Pattern,
+    value: Literal[True] = False,
+    invert: bool = False,
+    **kwargs,
+) -> tuple: ...
 
 
 def grep(
-    x: Container,
-    *pattern,
+    x: tuple | list[T] | dict[str, T],
+    *pattern: str | Pattern,
+    value: bool = False,
     invert: bool = False,
     **kwargs,
-) -> Container:
+) -> tuple | list[T | None] | dict[str, T | None] | list[bool] | dict[str, bool]:
     if isinstance(x, dict):
         res = {}
-        for k, v in x.items():
-            if isinstance(v, str):
-                for p in pattern:
-                    if re.search(p, v, **kwargs) and not invert:
-                        res[k] = v
-                        break
+
+        for k, elem in x.items():
+            ok = isinstance(elem, str) and strmatch(elem, *pattern)
+            ok = not ok and invert
+
+            if ok:
+                if value:
+                    res[k] = elem
+                else:
+                    res[k] = True
+            elif not value:
+                res[k] = False
+            else:
+                res[k] = None
 
         return res
 
@@ -999,27 +1081,101 @@ def grep(
     dst_type = type(x)
 
     for elem in x:
-        if isinstance(elem, str):
-            for p in pattern:
-                if re.search(p, elem, **kwargs) and not invert:
-                    res.append(elem)
-                    break
+        ok = isinstance(elem, str) and strmatch(elem, *pattern)
+        ok = not ok and invert
+
+        if ok:
+            if value:
+                res.append(elem)
+            else:
+                res.append(True)
+        elif not value:
+            res.append(False)
+        else:
+            res.append(None)
 
     return dst_type(res)
 
 
-def grepv(x: Container, *pattern, **kwargs) -> Container:
+@overload
+def grepv(
+    x: list[T],
+    *pattern: str | Pattern,
+    value: Literal[True] = False,
+    invert: Literal[False] = False,
+    **kwargs,
+) -> list[T]: ...
+
+
+@overload
+def grepv(
+    x: dict[str, T],
+    *pattern: str | Pattern,
+    value: Literal[True] = False,
+    invert: Literal[False] = False,
+    **kwargs,
+) -> dict[str, T | None]: ...
+
+
+@overload
+def grepv(
+    x: list[T],
+    *pattern: str | Pattern,
+    value: Literal[False] = False,
+    invert: Literal[True] = False,
+    **kwargs,
+) -> list[bool]: ...
+
+
+@overload
+def grepv(
+    x: dict[str, T],
+    *pattern: str | Pattern,
+    value: Literal[False] = False,
+    **kwargs,
+) -> dict[str, bool]: ...
+
+
+@overload
+def grepv(
+    x: dict[str, T],
+    *pattern: str | Pattern,
+    value: Literal[True] = False,
+    **kwargs,
+) -> dict[str, T | None]: ...
+
+
+@overload
+def grepv(
+    x: tuple,
+    *pattern: str | Pattern,
+    value: Literal[True] = False,
+    **kwargs,
+) -> tuple: ...
+
+
+def grepv(
+    x: tuple | list[T] | dict[str, T],
+    *pattern: str | Pattern,
+    value: bool = False,
+    **kwargs,
+) -> tuple | list[T | None] | dict[str, T | None] | list[bool] | dict[str, bool]:
     return grep(x, *pattern, invert=True, **kwargs)
 
 
-def cut(x: Container, start: int = 0, end: int = None, step: int = 1) -> Container:
+def cut(
+    x: Container,
+    start: int = 0,
+    end: int = None,
+    step: int = 1,
+) -> Container:
     x_len = len(x)
     end = x_len if end is None else end
     end = (x_len + end) if end < 0 else end
     start = (x_len + start) if start < 0 else start
 
-    if start < 0 or end < 0 or start > end or start > x_len or end > x_len:
-        raise_error(IndexError, args=dict(x=x, start=start, end=end))
+    if (start < 0 or end < 0) or (start > end or start > x_len) or (end > x_len):
+        raise IndexError(dict(x=x, start=start, end=end))
 
     if not isinstance(x, dict):
         return x[start:end:step]
@@ -1034,19 +1190,52 @@ def cut(x: Container, start: int = 0, end: int = None, step: int = 1) -> Contain
 
 
 @overload
-def partition(
-    x: Container, n: Container[[int | str], bool]
-) -> tuple[dict | list, dict | list]: ...
+def partition(x: list[T], n: int) -> list[list[T]]: ...
 
 
 @overload
-def partition(x: Container, n: int) -> list[Container]: ...
+def partition(x: tuple, n: int) -> list[tuple]: ...
+
+
+@overload
+def partition(
+    x: dict[str | int, T],
+    n: Callable[[Any], bool],
+) -> list[dict[str | int, T]]: ...
+
+
+@overload
+def partition(
+    x: list[T],
+    n: Callable[[Any], bool],
+) -> tuple[list[T], list[T]]: ...
+
+
+@overload
+def partition(
+    x: tuple,
+    n: Callable[[Any], bool],
+) -> tuple[tuple, tuple]: ...
+
+
+@overload
+def partition(
+    x: dict[str | int, T],
+    n: Callable[[Any], bool],
+) -> tuple[dict[str | int, T], dict[str | int, T]]: ...
 
 
 def partition(
     x: Container,
-    n: int | Callable[[int | str, Any], bool],
-) -> list[Container] | tuple[dict | list, dict | list]:
+    n: int | Callable[[Any], bool],
+) -> (
+    tuple[dict[str | int, T], dict[str | int, T]]
+    | tuple[tuple, tuple]
+    | tuple[list[T], list[T]]
+    | list[dict[str | int, T]]
+    | list[list[T]]
+    | list[tuple]
+):
     is_dict = isinstance(x, dict)
     if not is_dict and callable(n):
         res = ([], [])
@@ -1255,6 +1444,54 @@ def fzf(
     return [tbl[lookup[k]] for k in choice]
 
 
+def make_dict(
+    zipped: list[tuple[str | int, Any]] | None = None,
+    size: int | None = None,
+    keys: list[str] | None = None,
+    values: list[Any] | None = None,
+    use: Callable[[], Any] | None = None,
+    default_factory: Callable[[], Any] | None = None,
+) -> dict[str | int, Any | None]:
+    use = use if use else default_factory
+
+    if not (keys or (size and values)):
+        raise AssertionError("Cannot create a dict without knowing keys or dict size")
+    elif values and (use or size):
+        raise AssertionError("Cannot use values with default_factory and size")
+    elif keys and size:
+        raise AssertionError("Cannot use keys with size")
+    elif not (values or size or use):
+        raise AssertionError("Cannot determine how to make new values. Pass values/size/default_factory")
+
+    if keys:
+        pass
+    elif size:
+        keys = range(size)
+    elif values:
+        keys = range(len(values))
+
+
+    if zipped:
+        return dict(zipped)
+
+    if values:
+        if keys:
+            return dict(zip(keys, values))
+        elif size:
+            return dict(zip(range(size), values))
+        else:
+            return dict(zip(range(len(values)), values))
+
+    if size:
+        if keys:
+            
+
+    if keys and use:
+        return dict(zip(keys, (use() for _ in range(len(keys)))))
+    elif keys:
+        return dict(zip(keys, (None for _ in range(len(keys)))))
+
+
 __all__ = [
     "Container",
     "Pattern",
@@ -1336,6 +1573,10 @@ def _test():
     print(chunk(table(dict, size=11), 2))
     print(partition(table(dict, size=15), 3))
     print(partition(table(tuple, size=19), 2))
+    print(grep(["a", "b", "c", "d"], "[a-b]", value=True))
+    print(grep(["a", "b", "c", "d"], "[a-c]", value=False))
+    print(grepv(["a", "b", "c", "d"], "[a-c]", value=False))
+    print(grepv(dict(zip([0, 1, 2, 3], ["a", "b", "c", "d"])), "[a-c]", value=False))
 
 
-# _test()
+_test()

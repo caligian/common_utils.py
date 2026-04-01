@@ -32,13 +32,9 @@ class ResultBase(Generic[T, E]):
         metadata: dict[str, any] | None = None,
         result_type: str = "Ok",
     ) -> None:
-        self._value = value
+        self.value = value
         self.metadata: dict[str, any] = {} if not metadata else metadata
         self.type: str = result_type
-
-    @property
-    def value(self):
-        return self._value
 
     def __str__(self) -> str:
         return f"{self.type}: {str(self.value)}"
@@ -131,19 +127,19 @@ class ResultBase(Generic[T, E]):
     def unwrap(
         self,
         pcall: bool = False,
-        on_ok: Callable[[T], U] | None = None,
-        on_err: Callable[[E], U] | None = None,
+        true: Callable[[T], U] | None = None,
+        false: Callable[[E], U] | None = None,
         formatter: Callable[[ResultBase], str] | None = None,
     ) -> T | E:
         if self.is_ok():
-            if on_ok:
-                return on_ok(self.value)
+            if true:
+                return true(self.value)
             else:
                 return self.value
         elif not pcall:
             self.throw(formatter=formatter)
-        elif on_err:
-            return on_err(self.value)
+        elif false:
+            return false(self.value)
         else:
             return self.value
 
@@ -284,28 +280,28 @@ def is_err(obj: Any) -> bool:
 
 def rifelse(
     obj: Result[T, E],
-    if_ok: Callable[[T], U],
-    if_err: Callable[[E], U] = lambda error: error,
+    true: Callable[[T], U],
+    false: Callable[[E], U] = lambda error: error,
     raise_on_error: bool = False,
     formatter: Callable[[ResultBase], str] | None = None,
 ) -> U:
     if obj.is_ok():
-        return if_ok(obj.value)
+        return true(obj.value)
     elif raise_on_error:
         obj.throw(formatter)
     else:
-        return if_err(obj.value)
+        return false(obj.value)
 
 
 def runless(
     obj: Result[T, E],
-    if_err: Callable[[E], U],
-    if_ok: Callable[[T], U] = lambda value: value,
+    false: Callable[[E], U],
+    true: Callable[[T], U] = lambda value: value,
 ) -> U:
     if obj.is_ok():
-        return if_ok(obj.value)
+        return true(obj.value)
     else:
-        return if_err(obj.value)
+        return false(obj.value)
 
 
 def runwrap(
@@ -317,7 +313,7 @@ def runwrap(
     formatter: Callable[[ResultBase], str] | None = None,
 ) -> any:
     if is_ok(obj):
-        return obj.unwrap(pcall=pcall, on_ok=f)
+        return obj.unwrap(pcall=pcall, true=f)
     elif not pcall:
         obj.throw(formatter)
     elif default_factory:
@@ -377,6 +373,7 @@ __all__ = [
     "is_ok",
     "is_result",
     "rifelse",
+    "runless",
     "rpcall",
     "rsafe",
     "rthread",
