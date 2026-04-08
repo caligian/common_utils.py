@@ -13,6 +13,7 @@ from typing import (
 )
 from functools import partial
 from termcolor import cprint
+from .error import Error, ErrorGroup, is_error, is_error_class, is_error_instance
 
 T = TypeVar("T")
 E = TypeVar("E", bound=Exception)

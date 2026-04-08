@@ -532,7 +532,7 @@ def assoc(
     ks: int | str | list[int | str],
     value: Any = None,
     set: bool = False,
-) -> Result[Any, KeyError]: ...
+) -> Result[dict, KeyError]: ...
 
 
 @overload
@@ -541,7 +541,15 @@ def assoc(
     ks: int | str | list[int | str],
     value: Any = None,
     set: bool = False,
-) -> Result[Any, IndexError]: ...
+) -> Result[list | tuple, IndexError]: ...
+
+@overload
+def assoc(
+    d: dict,
+    ks: int | str | list[int | str],
+    value: Any = None,
+    set: Literal[True] = False,
+) -> Result[Container, KeyError]: ...
 
 
 def assoc(
@@ -566,12 +574,93 @@ def assoc(
     try:
         if set:
             v[k] = value
-        return Ok(v[k])
+            return Ok(d, dict(obj=d, level=v, k=ks[-1], index=len(ks) - 1))
+        else:
+            return Ok(v[k], dict(obj=d, level=v, k=ks[-1], index=len(ks) - 1))
     except Exception as error:
         return Err(
             error,
-            dict(obj=d, ks=ks, k=ks[-1], index=len(ks) - 1),
+            dict(obj=d, ks=ks, level=v, k=ks[-1], index=len(ks) - 1),
         )
+
+
+def fassoc(
+    d: list | dict,
+    ks: int | str | list[int | str],
+    value: Any, 
+    use: type[dict] | type[list]=dict,
+    default: Any | None = None,
+    default_factory: Callable[[], Any] | None = None,
+) -> Result[dict | list, IndexError | TypeError]:
+    "Make sure everything passed to this is subclassed with dict and has a getitem, setitem method"
+    cls = type(use)
+
+    def key_from_int(x: dict, k: int | str) -> str | Exception:
+        try:
+            if isinstance(k, str):
+                return k
+            else:
+                return list(x.keys())[k]
+        except Exception as error:
+            return error
+
+    def set_dict_value(x: dict, k: int | str) -> None:
+        pass
+
+    def set_list_value(x: list, k: int) -> None:
+        pass
+
+    def set_value(x: list | dict, k: int | str, v: Any) -> Literal[True] | Exception:
+        if isinstance(x, dict):
+            match key_from_int(x, k):
+                case Exception() as error:
+                    return error
+                case key:
+                    x[key] = v
+                    return True
+
+        if not isinstance(k, int):
+            return TypeError(f"Expected integer, got {k}")
+
+        try:
+            x[k] = v
+            return True
+        except IndexError as error:
+            if k < 0:
+                return TypeError(f"Invalid negative index provided, got {k}")
+            elif k >= len(x):
+                for _ in range(len(x) - k):
+                    x.append(v)
+                    return True
+            else:
+                return error
+
+    tbl = d
+    for i, k in enumerate(ks[:-1]):
+        try:
+            tbl[k] = use()
+        except (IndexError, KeyError):
+            if isinstance(tbl, list):
+
+                
+
+
+
+
+
+
+
+
+
+
+
+
+                        
+
+
+
+
+
 
 
 def as_list(xs: Any, force: bool = False) -> list:
@@ -1578,5 +1667,7 @@ def _test():
     print(grepv(["a", "b", "c", "d"], "[a-c]", value=False))
     print(grepv(dict(zip([0, 1, 2, 3], ["a", "b", "c", "d"])), "[a-c]", value=False))
 
+# fix pop and do not autoconvert int to str for dict index - it is incorrect
+# fix fassoc as well
 
 _test()

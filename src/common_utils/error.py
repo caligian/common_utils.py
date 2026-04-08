@@ -433,36 +433,22 @@ class Error(Exception):
         return cls
 
 
-err = Error.as_error(Exception("hello"))
-err().throwf()
-
 __all__ = [
-    # Make error type
-    "make_error",
-    #
-    # Raise errors
-    "raise_when",
-    "raise_unless",
-    "raise_error",
-    #
-    # Get error type
-    "error_class",
-    "get_error_class",
-    #
-    # Check type | instance
-    "is_error",
-    "is_error_instance",
-    "is_error_class",
-    #
-    # Error message
-    "error_msg",
-    "set_error_msg",
-    "get_error_msg",
-    #
-    # Error arguments
-    "error_args",
-    "get_error_args",
-    "set_error_args",
     "Error",
     "ErrorGroup",
+    "error_args",
+    "error_class",
+    "error_msg",
+    "get_error_args",
+    "get_error_class",
+    "get_error_msg",
+    "is_error",
+    "is_error_class",
+    "is_error_instance",
+    "make_error",
+    "raise_error",
+    "raise_unless",
+    "raise_when",
+    "set_error_args",
+    "set_error_msg",
 ]
