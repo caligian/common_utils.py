@@ -62,7 +62,6 @@ def raise_error(
         raise x
 
 
-throw = raise_error
 
 
 def deferror(
@@ -225,6 +224,7 @@ def error_class(error: Exception) -> type[Exception]:
         return error
 
 
+throw = raise_error
 set_error_args = error_set
 get_error_args = error_args
 get_error_class = error_class
