@@ -5,18 +5,20 @@ import re
 from typing import Callable, Sequence, Any, TypeVar, Iterable
 from collections import namedtuple
 from dataclasses import dataclass, field
-from enum import Enum
+from .cond import defined
 
 
 T = TypeVar("T")
 U = TypeVar("U")
+ErrorSpec = dict[str, str | dict[str, Any]]
 
-errorArgs = dict[str, Any] | None
-errorMessage = str | None
+errorCond = Callable[[], bool] | bool | None
 errorType = Exception | type[Exception]
-errorFormatter = Callable[[Exception], str] | None,
+errorMessage = str | None
+errorFormatter = Callable[[Exception], str] | None
 errorMetadata = dict[str, Any] | None
-errorParents = list[type[Exception]]
+errorParents = list[type[Exception]] | None
+errorState = tuple[errorMessage, errorMetadata]
 
 
 def to_camel_case(s: str) -> str:
@@ -39,23 +41,23 @@ def is_str_like(x: str | bytes) -> bool:
 def raise_error(
     x: type[Exception] | Exception,
     msg: errorMessage = None,
-    args: errorArgs = None,
+    metadata: errorMetadata = None,
 ) -> None:
     if isinstance(x, Exception):
-        if msg and args:
-            raise type(x)(msg, args)
+        if msg and metadata:
+            raise type(x)(msg, metadata)
         elif msg is not None:
-            raise type(x)(msg)
-        elif args is not None:
-            raise type(x)(args)
+            raise type(x)(msg, None)
+        elif metadata is not None:
+            raise type(x)(None, metadata)
         else:
-            raise type(x)
-    elif msg and args:
-        raise x(msg, args)
+            raise type(x)(None, None)
+    elif msg and metadata:
+        raise x(msg, metadata)
     elif msg is not None:
-        raise x(msg)
-    elif args is not None:
-        raise x(args)
+        raise x(msg, None)
+    elif metadata is not None:
+        raise x(None, metadata)
     else:
         raise x
 
@@ -75,22 +77,22 @@ def deferror(
         name = to_camel_case(name)
 
     parents = (parents) if not isinstance(parents, Sequence) else parents
-    cls = type(name, tuple(parents), metadata)
+    cls = type(name, (parents,), attributes)
 
     if formatter:
         attributes["__str__"] = formatter
 
-    for k, v in attributes.items():
+    for k, v in metadata.items():
         setattr(cls, k, v)
 
     return cls
 
 
 def raise_unless(
-    cond: Callable[[], bool] | bool,
+    cond: errorCond,
     error: errorType,
     msg: errorMessage = None,
-    args: str | None = None,
+    metadata: errorMetadata = None,
 ) -> bool:
     ok: bool
     if callable(cond):
@@ -99,16 +101,16 @@ def raise_unless(
         ok = cond
 
     if not ok:
-        throw(error, msg=msg, args=args)
+        throw(error, msg=msg, metadata=metadata)
 
     return True
 
 
 def raise_when(
-    cond: Callable[[], bool] | bool,
+    cond: errorCond,
     error: errorType,
     msg: errorMessage = None,
-    args: str | None = None,
+    metadata: errorMetadata = None,
 ) -> None:
     ok: bool
     if callable(cond):
@@ -117,7 +119,7 @@ def raise_when(
         ok = cond
 
     if ok:
-        throw(error, msg=msg, args=args)
+        throw(error, msg=msg, metadata=metadata)
 
     return True
 
@@ -125,76 +127,95 @@ def raise_when(
 raise_if = raise_when
 
 
-def error_args(error: Exception, msg: bool = True, metadata: bool = True) -> tuple[str, dict[str, Any]] | str | dict[str, Any]:
+def error_set(
+    error: Exception,
+    msg: errorMessage = None,
+    metadata: errorMetadata = None,
+) -> Exception:
+    msg_def = defined(msg)
+    metadata_def = defined(metadata)
+    args = error.args
+    args_empty = len(args) == 0
+    default_msg = args[0] if not args_empty else None
+    default_metadata = args[1] if len(args) >= 1 else None
+    use_msg = None
+    use_metadata = None
+
+    if msg_def and metadata_def:
+        use_msg = msg
+        use_metadata = metadata
+    elif msg_def:
+        use_msg = msg
+        use_metadata = default_metadata
+    elif metadata_def:
+        use_metadata = metadata
+        use_msg = default_msg
+
+    error.args = (use_msg, use_metadata)
+    return error
+
+
+def set_error_msg(error: Exception, msg: errorMessage) -> Exception:
+    return error_set(error, msg=msg)
+
+
+def set_error_metadata(error: Exception, metadata: errorMetadata) -> Exception:
+    return error_set(error, metadata=metadata)
+
+
+def error_args(
+    error: Exception,
+    default_msg: errorMessage = None,
+    default_metadata: errorMetadata = None,
+) -> errorState:
     args = error.args
     args_len = len(args)
+    is_one = args_len == 1
+    none = args_len == 0
 
-    if args_len == 0:
-        return (None, None)
-    elif msg and metadata:
-        return (msg, metadata)
-    elif msg and args_len >= 1:
-        return (msg, None)
-    elif metadata and args_len  >= 1:
-        return (None, metadata)
-
-
-
-def set_error_args(
-    error: errorType,
-    *args: Sequence,
-) -> Exception:
-    if is_error_instance(error):
-        error.args = tuple(args)
-        return error
-    else:
-        return error(*args)
-
-
-def error_msg(error: Exception) -> str | tuple | None:
-    if is_error_instance(error):
-        args = error.args
-        if len(args) == 0:
-            return
-        elif len(args) == 1 and isinstance(args[0], (str, bytes)):
-            return args[0]
+    if none:
+        return (default_msg, None)
+    elif is_one:
+        current = args[0]
+        if isinstance(current, dict):
+            return (default_msg, current)
         else:
-            return args
-
-
-def set_error_msg(
-    error: errorType,
-    msg: str,
-) -> Exception:
-    if is_error_instance(error):
-        args = error.args
-        if len(args) == 1 and isinstance(type(args[0]), (str, bytes)):
-            args = list(args)
-            args[0] = msg
-            error.args = tuple(args)
-            return error
-        else:
-            error.args = (msg,)
-            return error
+            return (current, default_metadata)
+    elif args[0] is None and args[1] is None:
+        return (default_msg, default_metadata)
+    elif args[0] is None:
+        return (default_msg, None)
+    elif args[1] is None:
+        return (None, default_metadata)
     else:
-        return error(msg)
+        return (default_msg, default_metadata)
 
 
-def is_error_instance(error: any) -> bool:
+def error_msg(error: Exception) -> str | None:
+    msg, _ = error_args(error)
+    return msg
+
+
+def error_metadata(error: Exception) -> dict[str, Any] | None:
+    _, metadata = error_args(error)
+    return metadata
+
+
+def is_error_instance(error: Any) -> bool:
     return isinstance(error, Exception)
 
 
-def is_error(error: any) -> bool:
-    return is_error_instance(error) or is_error_class(error)
-
-
-def is_error_class(error: any) -> bool:
+def is_error_class(error: Any) -> bool:
     if is_error_instance(error):
         return False
     elif isinstance(error, type) and issubclass(error, Exception):
         return True
     else:
         return False
+
+
+def is_error(error: Any) -> bool:
+    return is_error_instance(error) or is_error_class(error)
 
 
 def error_class(error: Exception) -> type[Exception]:
@@ -204,15 +225,17 @@ def error_class(error: Exception) -> type[Exception]:
         return error
 
 
+set_error_args = error_set
 get_error_args = error_args
 get_error_class = error_class
 get_error_msg = error_msg
-
-ErrorSpec = dict[str, str | dict[str, Any]]
+get_error_metadata = error_metadata
 
 
 @dataclass
 class ErrorGroup(dict[str, Exception]):
+    __match_args__ = ('errors', )
+
     def __init__(self, *specs: ErrorSpec | Exception) -> None:
         self.errors: dict[str, Exception] = {}
 
@@ -256,7 +279,7 @@ class ErrorGroup(dict[str, Exception]):
         err: str,
         attr: str,
         value: Any | None = None,
-        update: Callable[[Any], Any] | None = None, 
+        update: Callable[[Any], Any] | None = None,
     ) -> bool:
         try:
             use = update() if update else value
@@ -267,7 +290,7 @@ class ErrorGroup(dict[str, Exception]):
 
     def update(
         self,
-        err: str, 
+        err: str,
         msg: errorMessage = None,
     ) -> None:
         pass
@@ -295,19 +318,22 @@ class ErrorGroup(dict[str, Exception]):
 
 __all__ = [
     "ErrorGroup",
+    "deferror",
     "error_args",
     "error_class",
+    "error_metadata",
     "error_msg",
     "get_error_args",
     "get_error_class",
+    "get_error_metadata",
     "get_error_msg",
     "is_error",
     "is_error_class",
     "is_error_instance",
-    "deferror",
     "raise_error",
     "raise_unless",
     "raise_when",
     "set_error_args",
+    "set_error_metadata",
     "set_error_msg",
 ]
