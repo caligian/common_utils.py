@@ -1,4 +1,5 @@
 from termcolor import cprint
+from pprint import pprint, pp
 
 
 def message(*s: str, color: str = "blue", **kwargs) -> None:
@@ -17,4 +18,4 @@ def msg_warn(*s: str, color: str = "yellow", **kwargs) -> None:
     cprint(*s, color=color, **kwargs)
 
 
-__all__ = ["message", "msg_err", "msg_ok", "msg_warn"]
+__all__ = ["message", "msg_err", "msg_ok", "msg_warn", "pprint", "pp"]

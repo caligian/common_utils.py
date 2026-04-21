@@ -5,12 +5,22 @@ from typing import Callable, overload, Any, Literal
 from pyfzf import FzfPrompt
 from functools import reduce
 from math import ceil
-from .result import Ok, Err, Result, T, E
-from .error import (
+
+# from .result import Ok, Err, Result, T, E, is_ok, is_err
+# from .error import (
+#     error_msg,
+#     raise_error,
+#     is_error,
+# )
+# from .types import is_a, container, sequence
+from src.common_utils.result import Ok, Err, Result, T, E, is_ok, is_err
+from src.common_utils.error import (
     error_msg,
     raise_error,
     is_error,
 )
+from src.common_utils.types import is_a, container, sequence
+
 
 Pattern = re.Pattern
 Container = list | tuple | dict
@@ -532,7 +542,7 @@ def assoc(
     ks: int | str | list[int | str],
     value: Any = None,
     set: bool = False,
-) -> Result[dict, KeyError]: ...
+) -> Ok[dict] | Err[KeyError]: ...
 
 
 @overload
@@ -541,7 +551,8 @@ def assoc(
     ks: int | str | list[int | str],
     value: Any = None,
     set: bool = False,
-) -> Result[list | tuple, IndexError]: ...
+) -> Ok[list | tuple] | Err[IndexError]: ...
+
 
 @overload
 def assoc(
@@ -549,7 +560,7 @@ def assoc(
     ks: int | str | list[int | str],
     value: Any = None,
     set: Literal[True] = False,
-) -> Result[Container, KeyError]: ...
+) -> Ok[Container] | Err[KeyError]: ...
 
 
 def assoc(
@@ -557,7 +568,7 @@ def assoc(
     ks: int | str | list[int | str],
     value: Any = None,
     set: bool = False,
-) -> Result[Any, KeyError | IndexError]:
+) -> Ok[Any] | Err[KeyError | IndexError]:
     ks = [ks] if not sequence(ks) else ks
     v = d
 
@@ -584,83 +595,100 @@ def assoc(
         )
 
 
+fassocTable = list | dict[int | str, Any]
+fassocIndex = str | int
+fassocIndices = list[str | int]
+fassocDefaultContainer = type[dict] | type[list]
+fassocDict = dict[int | str, Any]
+fassocErrors = KeyError | IndexError | TypeError | ValueError
+
+
 def fassoc(
-    d: list | dict,
-    ks: int | str | list[int | str],
-    value: Any, 
-    use: type[dict] | type[list]=dict,
+    d: fassocTable,
+    ks: fassocIndex | fassocIndices,
+    value: Any,
+    use: fassocDefaultContainer | None = None,
     default: Any | None = None,
     default_factory: Callable[[], Any] | None = None,
-) -> Result[dict | list, IndexError | TypeError]:
-    "Make sure everything passed to this is subclassed with dict and has a getitem, setitem method"
-    cls = type(use)
+) -> Ok[fassocTable] | Err[fassocErrors]:
+    use_cls = use if use is not None else dict
+    ks = [ks] if is_a(ks, str, bytes, int) else ks
 
-    def key_from_int(x: dict, k: int | str) -> str | Exception:
-        try:
-            if isinstance(k, str):
-                return k
-            else:
-                return list(x.keys())[k]
-        except Exception as error:
-            return error
-
-    def set_dict_value(x: dict, k: int | str) -> None:
-        pass
-
-    def set_list_value(x: list, k: int) -> None:
-        pass
-
-    def set_value(x: list | dict, k: int | str, v: Any) -> Literal[True] | Exception:
-        if isinstance(x, dict):
-            match key_from_int(x, k):
-                case Exception() as error:
-                    return error
-                case key:
-                    x[key] = v
-                    return True
-
-        if not isinstance(k, int):
-            return TypeError(f"Expected integer, got {k}")
-
-        try:
-            x[k] = v
-            return True
-        except IndexError as error:
+    if not is_a(d, dict):
+        for i, k in enumerate(ks):
             if k < 0:
-                return TypeError(f"Invalid negative index provided, got {k}")
-            elif k >= len(x):
-                for _ in range(len(x) - k):
-                    x.append(v)
-                    return True
+                return Err(
+                    IndexError(f"Cannot use negative index `{k}` with list/tuple"),
+                    dict(i=i, k=k, ks=ks, remaining=ks[i + 1 :], d=d, d_type=type(d)),
+                )
+
+    def get_default() -> Any:
+        if default_factory:
+            return default_factory()
+        else:
+            return default
+
+    def set_dict_value(x: fassocDict, k: fassocIndex, v: Any) -> dict[str | int, Any]:
+        x[k] = v
+        return x
+
+    def set_list_value(x: list, k: int, v: Any) -> list:
+        x_len = len(x)
+
+        if k >= x_len:
+            for i in range((k - x_len) + 1):
+                x.append(get_default())
+
+        x[k] = v
+        return x
+
+    def set_value(x: fassocTable, k: fassocIndex, v: Any) -> fassocTable:
+        if not is_a(x, list, dict):
+            return Err(
+                ValueError(
+                    f"Only mutable data structures such as list and dict are allowed, got {type(x)}"
+                ),
+                dict(x=x, k=k, v=v, ks=ks, d=d),
+            )
+        elif is_a(x, list):
+            try:
+                return Ok(set_list_value(x, k, v))
+            except IndexError as error:
+                return Err(error, dict(d=d, ks=ks, x=x, k=k, v=v))
+        else:
+            return Ok(set_dict_value(x, k, v))
+
+    def index_into(
+        x: fassocTable,
+        k: fassocIndex,
+        use: fassocDefaultContainer,
+    ) -> Ok[fassocTable] | Err[IndexError]:
+        try:
+            inside = x[k]
+            if container(inside):
+                return Ok(inside)
             else:
-                return error
+                return set_value(x, k, use())
+        except (IndexError, KeyError, TypeError):
+            return set_value(x, k, use())
 
     tbl = d
-    for i, k in enumerate(ks[:-1]):
-        try:
-            tbl[k] = use()
-        except (IndexError, KeyError):
-            if isinstance(tbl, list):
+    for k in ks[:-1]:
+        inner = index_into(tbl, k, use_cls)
 
-                
+        if is_err(inner):
+            return inner
+        else:
+            tbl = inner.unwrap()
 
+    last_key = ks[-1]
+    res = index_into(tbl, last_key, use_cls)
 
-
-
-
-
-
-
-
-
-
-
-                        
-
-
-
-
-
+    if is_err(res):
+        return res
+    else:
+        set_value(tbl, last_key, value)
+        return Ok(d, res.metadata)
 
 
 def as_list(xs: Any, force: bool = False) -> list:
@@ -670,14 +698,6 @@ def as_list(xs: Any, force: bool = False) -> list:
         return list(xs)
     else:
         return [xs]
-
-
-def sequence(xs: list | tuple) -> bool:
-    return isinstance(xs, (tuple, list))
-
-
-def container(xs: dict | list | tuple) -> bool:
-    return isinstance(xs, (tuple, int, dict))
 
 
 def flatten(xs: list | tuple, maxdepth: int = -1) -> list | tuple:
@@ -702,18 +722,35 @@ def flatten(xs: list | tuple, maxdepth: int = -1) -> list | tuple:
         return result
 
 
-def paste0(
-    *s: str | list[str],
-    collapse: str = "",
-) -> str:
+def paste0(*s: str | list[str]) -> str:
+    return ("").join(flatten(s))
+
+
+def paste(*s: str | list[str], collapse: str = " ") -> str:
     return (collapse).join(flatten(s))
 
 
-def paste(
-    *s: str | list[str],
-    collapse: str = " ",
-) -> str:
-    return (collapse).join(flatten(s))
+def cat(*seqs: list | tuple) -> list | tuple:
+    res = []
+
+    for x in seqs:
+        res.extend(list(x))
+
+    return res
+
+
+def merge(*dicts: dict, overwrite: bool = True) -> dict:
+    res = {}
+
+    for d in dicts:
+        for k, v in d.items():
+            if overwrite or (res.get(k) is None):
+                res[k] = v
+    return res
+
+
+def lmerge(*dicts: dict) -> dict:
+    return merge(*dicts, overwrite=False)
 
 
 def push(
@@ -879,7 +916,7 @@ def pop(
     default: Any | None = None,
     default_factory: Callable | None = None,
     pcall: bool = False,
-) -> Result[Any, IndexError]: ...
+) -> Ok[Any] | Err[IndexError]: ...
 
 
 @overload
@@ -889,7 +926,7 @@ def pop(
     default: Any | None = None,
     default_factory: Callable | None = None,
     pcall: bool = False,
-) -> Result[Any, KeyError]: ...
+) -> Ok[Any] | Err[KeyError]: ...
 
 
 def pop(
@@ -898,7 +935,7 @@ def pop(
     default: Any | None = None,
     default_factory: Callable | None = None,
     pcall: bool = False,
-) -> Result[Any, KeyError | IndexError]:
+) -> Ok[Any] | Err[KeyError | IndexError]:
     ys: list
     if isinstance(xs, tuple):
         ys = list(xs)
@@ -938,7 +975,7 @@ def shift(
     default: Any | None = None,
     default_factory: Callable | None = None,
     pcall: bool = False,
-) -> Result[Any, KeyError]: ...
+) -> Ok[Any] | Err[KeyError]: ...
 
 
 @overload
@@ -947,7 +984,7 @@ def shift(
     default: Any | None = None,
     default_factory: Callable | None = None,
     pcall: bool = False,
-) -> Result[Any, IndexError]: ...
+) -> Ok[Any] | Err[IndexError]: ...
 
 
 def shift(
@@ -955,7 +992,7 @@ def shift(
     default: Any | None = None,
     default_factory: Callable | None = None,
     pcall: bool = False,
-) -> Result[Any, KeyError | IndexError]:
+) -> Ok[Any] | Err[KeyError | IndexError]:
     return pop(
         xs,
         index=0,
@@ -973,7 +1010,7 @@ def popn(
     pcall: bool = False,
     default_factory: Callable | None = None,
     default: Any | None = None,
-) -> Result[list[Any], KeyError | IndexError]:
+) -> Ok[list[Any]] | Err[KeyError | IndexError]:
     res = []
     for i in range(n):
         match pop(
@@ -1009,7 +1046,7 @@ def shiftn(
     reverse: bool = False,
     pcall: bool = False,
     default: Callable | None = None,
-) -> Result[list[Any], IndexError | KeyError | ValueError]:
+) -> Ok[list[Any]] | Err[IndexError | KeyError | ValueError]:
     return popn(
         xs,
         n,
@@ -1533,54 +1570,6 @@ def fzf(
     return [tbl[lookup[k]] for k in choice]
 
 
-def make_dict(
-    zipped: list[tuple[str | int, Any]] | None = None,
-    size: int | None = None,
-    keys: list[str] | None = None,
-    values: list[Any] | None = None,
-    use: Callable[[], Any] | None = None,
-    default_factory: Callable[[], Any] | None = None,
-) -> dict[str | int, Any | None]:
-    use = use if use else default_factory
-
-    if not (keys or (size and values)):
-        raise AssertionError("Cannot create a dict without knowing keys or dict size")
-    elif values and (use or size):
-        raise AssertionError("Cannot use values with default_factory and size")
-    elif keys and size:
-        raise AssertionError("Cannot use keys with size")
-    elif not (values or size or use):
-        raise AssertionError("Cannot determine how to make new values. Pass values/size/default_factory")
-
-    if keys:
-        pass
-    elif size:
-        keys = range(size)
-    elif values:
-        keys = range(len(values))
-
-
-    if zipped:
-        return dict(zipped)
-
-    if values:
-        if keys:
-            return dict(zip(keys, values))
-        elif size:
-            return dict(zip(range(size), values))
-        else:
-            return dict(zip(range(len(values)), values))
-
-    if size:
-        if keys:
-            
-
-    if keys and use:
-        return dict(zip(keys, (use() for _ in range(len(keys)))))
-    elif keys:
-        return dict(zip(keys, (None for _ in range(len(keys)))))
-
-
 __all__ = [
     "Container",
     "Pattern",
@@ -1667,7 +1656,81 @@ def _test():
     print(grepv(["a", "b", "c", "d"], "[a-c]", value=False))
     print(grepv(dict(zip([0, 1, 2, 3], ["a", "b", "c", "d"])), "[a-c]", value=False))
 
+
 # fix pop and do not autoconvert int to str for dict index - it is incorrect
 # fix fassoc as well
 
-_test()
+# _test()
+
+# x = dict(a=1, b=[2, 3, 4], c=[1, 2, 3])
+# print(fassoc(x, ("b", 1, 1), 10).unwrap()
+
+
+__all__ = [
+    "Container",
+    "Pattern",
+    "Sequence",
+    "andgrep",
+    "as_float",
+    "as_int",
+    "as_list",
+    "assoc",
+    "butlast",
+    "car",
+    "cat",
+    "cdr",
+    "chunk",
+    "cut",
+    "empty_table",
+    "endswith",
+    "extend",
+    "fassoc",
+    "flatten",
+    "fzf",
+    "grep",
+    "grepv",
+    "head",
+    "identity",
+    "is_float",
+    "is_int",
+    "lextend",
+    "lmerge",
+    "lstrip",
+    "merge",
+    "orgrep",
+    "partition",
+    "paste",
+    "paste0",
+    "pop",
+    "popn",
+    "push",
+    "reverse",
+    "rstrip",
+    "sed",
+    "seq",
+    "shift",
+    "shiftn",
+    "split",
+    "splitlines",
+    "startswith",
+    "strfind",
+    "strip",
+    "strmatch",
+    "table",
+    "tail",
+    "tall",
+    "tapply",
+    "tblank",
+    "texclude",
+    "tfor",
+    "tget",
+    "thas",
+    "titems",
+    "tkeep",
+    "tkeys",
+    "treduce",
+    "tset",
+    "tsome",
+    "tvalues",
+    "unpush",
+]

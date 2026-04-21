@@ -1,53 +1,52 @@
 import re
 
-from sspipe import p, px
 from typing import Callable, Self
 from functools import partial
 from dataclasses import dataclass, field
 from termcolor import cprint
 from pyfzf import FzfPrompt
-from .result import Success, Failure, T, safe
+from .result import Ok, Err, T, safe
 from .error import error_message
 from .prompt import Prompt
 
 
 Index = list[int]
 Input = list[str] | str
-CommandCondition = Callable[
-    [str], str | bool | ValueError | Success[str | bool] | Failure[ValueError]
-]
-CommandMapper = Callable[[any], Success[str] | Failure[ValueError] | str | list[str]]
+CommandOutputResult = Ok[str | bool] | Err[ValueError]
+CommandCondition = Callable[[str], CommandOutputResult]
+CommandMapper = Callable[[any], Ok[str | list[str]] | Err[ValueError]]
+
+def make_condition(**default_kwargs) -> Callable:
+    def decorator(f: Callable) -> Callable[[any], bool | ValueError]:
+        def function(*args, **kwargs) -> bool | ValueError:
+            nonlocal default_kwargs
+            default_kwargs = default_kwargs.copy()
+            default_kwargs.update(kwargs)
+            kwargs = default_kwargs
+            ok = f(*args, **kwargs)
+            t_ok = type(ok)
+            is_bool = t_ok is bool
+            is_err = t_ok is ValueError
+            is_not_ok = (is_bool and not ok) or (not ok) or is_err
+
+            if is_err:
+                return ok
+            elif is_not_ok:
+                return ValueError(f"Assertion error. Function provided: {f}")
+            elif ok:
+                return True
+
+        return function
+
 
 
 class Utils:
     @staticmethod
-    def condition(**default_kwargs) -> Callable:
-        def decorator(f: Callable) -> Callable[[any], bool | ValueError]:
-            def function(*args, **kwargs) -> bool | ValueError:
-                nonlocal default_kwargs
-                default_kwargs = default_kwargs.copy()
-                default_kwargs.update(kwargs)
-                kwargs = default_kwargs
-                ok = f(*args, **kwargs)
-                t_ok = type(ok)
-                is_bool = t_ok is bool
-                is_err = t_ok is ValueError
-                is_not_ok = (is_bool and not ok) or (not ok) or is_err
-
-                if is_err:
-                    return ok
-                elif is_not_ok:
-                    return ValueError(f"Assertion error. Function provided: {f}")
-                elif ok:
-                    return True
-
-            return function
-
         return decorator
 
     @staticmethod
     def apply(**default_kwargs) -> Callable:
-        def decorator(f: Callable) -> Callable[[any], Success | Failure]:
+        def decorator(f: Callable) -> Callable[[any], Ok | Err]:
             def function(*args, **kwargs) -> bool | ValueError:
                 nonlocal default_kwargs
                 nonlocal f
@@ -118,11 +117,11 @@ class Condition:
 
 class Map:
     @staticmethod
-    def strip(s: str | list[str]) -> Success[str | list[str]]:
+    def strip(s: str | list[str]) -> Ok[str | list[str]]:
         if type(s) is str:
-            return Success(s.strip())
+            return Ok(s.strip())
         else:
-            return Success([x.strip() for x in s])
+            return Ok([x.strip() for x in s])
 
 
 class InvalidCommandError(Exception):
@@ -171,7 +170,7 @@ def max_key_width(xs: list[str]):
 def parse_range(
     n: int | list[int],
     inp: str,
-) -> Success[list[int]] | Failure[InvalidArgumentError]:
+) -> Ok[list[int]] | Err[InvalidArgumentError]:
     inp = inp.lstrip().rstrip()
     exclude = inp[0] == "^"
     inp = exclude and inp[1:] or inp
@@ -189,18 +188,18 @@ def parse_range(
             error = InvalidArgumentError(
                 f"Expected {{start_index}}-{{end_index}} OR {{index}} OR ^{{index}} OR ^{{start_index}}-{{end_index}} where index are natural numbers, got {inp_}"
             )
-            return Failure(error)
+            return Err(error)
         start, end = inp
         start, end = int(inp[0]), int(inp[1])
 
         if start == 0 or end == 0:
-            return Failure(InvalidArgumentError(" items are not zero-indexed"))
+            return Err(InvalidArgumentError(" items are not zero-indexed"))
 
         start = n + start if start < 0 else start
         end = n + end if end < 0 else end
 
         if start >= end:
-            return Failure(
+            return Err(
                 InvalidArgumentError(
                     f"Expected {{start_index}} < {{end_index}}, got start={start}, end={end}"
                 )
@@ -211,16 +210,16 @@ def parse_range(
         try:
             index = [int(inp)]
             if index[0] == 0:
-                return Failure(
+                return Err(
                     InvalidArgumentError(" items are not zero indexed while selection")
                 )
         except ValueError:
-            return Failure(InvalidArgumentError(f"Expected an integer, got {inp}"))
+            return Err(InvalidArgumentError(f"Expected an integer, got {inp}"))
 
     if exclude:
-        return Success(list(filter(lambda x: x not in index, n)))
+        return Ok(list(filter(lambda x: x not in index, n)))
     else:
-        return Success(index)
+        return Ok(index)
 
 
 @dataclass
@@ -283,58 +282,56 @@ class Command:
         if print_nl:
             print()
 
-    def check(self, x: str | list[str] | None) -> bool | Failure[ValueError]:
+    def check(self, x: str | list[str] | None) -> bool | Err[ValueError]:
         if x is None:
-            return Success(x)
+            return Ok(x)
 
-        x = Success(x)
+        x = Ok(x)
         for f in self.cond:
             res = f(x.value)
             try:
                 match res:
                     case ValueError() as error:
-                        return Failure(error)
-                    case Failure(error) as failure:
+                        return Err(error)
+                    case Err(error) as failure:
                         return failure
-                    case Success(value) as success:
+                    case Ok(value) as success:
                         res = success
                     case str(value):
-                        res = Success(value)
+                        res = Ok(value)
                     case True:
-                        res = Success(x)
+                        res = Ok(x)
                     case failure:
                         raise ValueError(f"Invalid return value: {failure}")
             except ValueError as error:
-                return Failure(error)
+                return Err(error)
 
         return x
 
-    def process(
-        self, x: str | list[str] | None = None
-    ) -> Success | Failure[ValueError]:
+    def process(self, x: str | list[str] | None = None) -> Ok | Err[ValueError]:
         match self.check(x):
-            case Failure() as failure:
+            case Err() as failure:
                 return failure
-            case Success(str(value)):
+            case Ok(str(value)):
                 x = value
 
         if x is None:
-            return Success(x)
+            return Ok(x)
 
-        x = Success(x)
+        x = Ok(x)
         for f in self.apply:
             try:
                 match f(x.value):
-                    case Success() as success:
+                    case Ok() as success:
                         x = success
-                    case Failure() as failure:
+                    case Err() as failure:
                         return failure
                     case value if value:
-                        x = Success(value)
+                        x = Ok(value)
                     case value:
                         raise ValueError(f"Invalid return value: {value}")
             except ValueError as error:
-                return Failure(error)
+                return Err(error)
 
         return x
 
@@ -342,8 +339,8 @@ class Command:
         self,
         user_input: str | None = None,
     ) -> (
-        Success
-        | Failure[
+        Ok
+        | Err[
             VoidCommandError
             | TooManyArgumentsError
             | NotEnoughArgumentsError
@@ -358,13 +355,13 @@ class Command:
                 return self.process(user_input)
             case 0:
                 if user_input != "":
-                    return Failure(
+                    return Err(
                         VoidCommandError(
                             f"Command {self.name} does not accept any arguments"
                         )
                     )
                 else:
-                    return Success([])
+                    return Ok([])
             case nargs:
                 user_input = re.split(r"\s+", user_input, flags=re.M)
                 is_empty = len(user_input) == 0
@@ -374,7 +371,7 @@ class Command:
                         return self.process(user_input)
                     case "?":
                         if len(user_input) > 1:
-                            return Failure(
+                            return Err(
                                 TooManyArgumentsError(
                                     f"Expected 0 or 1 argument, got {len(user_input)}"
                                 )
@@ -383,14 +380,14 @@ class Command:
                             return self.process(user_input)
                     case "+":
                         if is_empty:
-                            return Failure(
+                            return Err(
                                 NotEnoughArgumentsError("Expected at least 1 argument"),
                             )
                         else:
                             return self.process(user_input)
                     case n if type(nargs) is int:
                         if len(user_input) != n:
-                            return Failure(
+                            return Err(
                                 NotEnoughArgumentsError(
                                     f"expected {nargs} arguments, got {n}"
                                 ),
@@ -418,7 +415,7 @@ class Menu:
         self.history = []
         self.prompt = Prompt(prompt_history)
         self.prompt.init()
-        self.hooks: list[Callable[[], Success[bool] | Failure | Exception]] = []
+        self.hooks: list[Callable[[], Ok[bool] | Err | Exception]] = []
 
         self.on(
             "filter",
@@ -485,7 +482,7 @@ class Menu:
         res = list(filter(pattern.search, items))
 
         if len(res) == 0:
-            return Failure(
+            return Err(
                 NoChoicesMatchedError(
                     f"pattern `{repr(pattern)}` did not match any items"
                 ),
@@ -494,7 +491,7 @@ class Menu:
         self.items = res
         self.history.append(current)
 
-        return Success(res)
+        return Ok(res)
 
     def clear_filter(self) -> None:
         if len(self.history) == 0:
@@ -511,21 +508,21 @@ class Menu:
 
     def cmd_fzf(
         self, pattern: str | re.Pattern | None = None
-    ) -> Success[T] | Failure[NoChoicesMatchedError]:
+    ) -> Ok[T] | Err[NoChoicesMatchedError]:
         items = self.items
         if pattern:
             items = [x for x in items if re.search(pattern, x, flags=re.M + re.I)]
 
         if len(items) == 0:
-            return Failure(NoChoicesMatchedError("Nothing selected"))
+            return Err(NoChoicesMatchedError("Nothing selected"))
 
         prompt = FzfPrompt().prompt
         selected = prompt(items, "--multi")
 
         if len(selected) == 0:
-            return Failure(NoChoicesMatchedError("Nothing selected"))
+            return Err(NoChoicesMatchedError("Nothing selected"))
         else:
-            return Success(selected)
+            return Ok(selected)
 
     def cmd_print(self) -> None:
         items = self.items
@@ -535,23 +532,23 @@ class Menu:
             cprint(f"{i + 1:<{key_width}} |", color="yellow", end=" ")
             cprint(str(x), color="yellow")
 
-    def cmd_select(self, *index: str | int) -> Success | Failure:
+    def cmd_select(self, *index: str | int) -> Ok | Err:
         choices = [x.strip() for x in index]
         choices = [x for x in choices if len(x) > 0]
         n = list(range(1, len(self.items) + 1))
 
         if len(choices) == 0:
-            return Failure(NotEnoughArgumentsError("no choices provided"))
+            return Err(NotEnoughArgumentsError("no choices provided"))
 
         selected = set()
         for choice in choices:
             match parse_range(n, choice):
-                case Failure() as failure:
+                case Err() as failure:
                     return failure
-                case Success(indices):
+                case Ok(indices):
                     selected.update(set(indices))
 
-        return Success(list(selected))
+        return Ok(list(selected))
 
     def on(
         self,
@@ -574,7 +571,7 @@ class Menu:
         for alias in command.aliases:
             self.command_aliases[alias] = command
 
-    def input(self) -> Success[str] | Failure[EOFError]:
+    def input(self) -> Ok[str] | Err[EOFError]:
         inp = ""
 
         try:
@@ -588,7 +585,7 @@ class Menu:
             should_quit = input()
 
             if "y" in should_quit:
-                return Failure(error)
+                return Err(error)
             else:
                 return self.input()
 
@@ -605,10 +602,10 @@ class Menu:
             cprint("Pass 'help' to display help", "blue")
             return self.input()
         elif len(cmd) == 1:
-            return Success((self.command_aliases[cmd[0]], ""))
+            return Ok((self.command_aliases[cmd[0]], ""))
         else:
             print(cmd)
-            return Success((self.command_aliases[cmd[0]], cmd[1]))
+            return Ok((self.command_aliases[cmd[0]], cmd[1]))
 
     def pop_history(self) -> list[str]:
         if len(self.history) == 0:
@@ -616,35 +613,33 @@ class Menu:
         else:
             return self.history.pop()
 
-    def cmd_help(self, *_) -> Success:
+    def cmd_help(self, *_) -> Ok:
         self.print_help()
-        return Success(True)
+        return Ok(True)
 
-    def cmd_clear(self, *_) -> Success:
+    def cmd_clear(self, *_) -> Ok:
         self.clear_filter()
-        return Success(True)
+        return Ok(True)
 
     def add_hook(self, f: Callable[[Self], any]) -> None:
         self.hooks.append(partial(f, self))
 
-    def run_hooks(self) -> Success[bool] | Failure:
+    def run_hooks(self) -> Ok[bool] | Err:
         for h in self.hooks:
             try:
                 match h():
-                    case Failure() as failure:
+                    case Err() as failure:
                         return failure
-                    case Success():
+                    case Ok():
                         continue
                     case Exception() as error:
-                        return Failure(error)
+                        return Err(error)
                     case _:
-                        ValueError(
-                            "returned value is not any of Failure | Success | Exception "
-                        )
+                        ValueError("returned value is not any of Err | Ok | Exception ")
             except Exception as error:
-                return Failure(error)
+                return Err(error)
 
-        return Success(True)
+        return Ok(True)
 
     def cli(
         self,
@@ -652,12 +647,12 @@ class Menu:
         print_items: bool = True,
     ) -> list[str] | None:
         match self.run_hooks():
-            case Success() as success:
+            case Ok() as success:
                 if success["completed"]:
                     return
                 else:
                     pass
-            case Failure(error):
+            case Err(error):
                 cprint(error_message(error), "red")
 
         items = self.items if self.items == [] else items
@@ -665,7 +660,7 @@ class Menu:
             self.cmd_print()
 
         res = self.input()
-        if not isinstance(res, Success):
+        if not isinstance(res, Ok):
             return
 
         cmd, args = res.value
@@ -675,7 +670,7 @@ class Menu:
         cmd: Command
         parsed = cmd.parse(args)
 
-        if isinstance(parsed, Failure):
+        if isinstance(parsed, Err):
             cprint(error_message(parsed.value), "red")
             return self.cli(items=items, print_items=False)
 
@@ -688,23 +683,23 @@ class Menu:
                 return self.cli(print_items=False)
             case "select":
                 match self.cmd_select(*value):
-                    case Failure(error):
+                    case Err(error):
                         cprint(error_message(error), "red")
                     case result:
                         return [self.items[index - 1] for index in result.value]
             case "filter":
                 match self.cmd_filter(*value):
-                    case Failure(error):
+                    case Err(error):
                         cprint(error_message(error), "red")
                         return self.cli(print_items=False)
                     case _:
                         return self.cli(print_items=True)
             case "fzf":
                 match self.cmd_fzf(*value):
-                    case Failure(error):
+                    case Err(error):
                         cprint(error_message(error), "red")
                         return self.cli(print_items=True)
-                    case Success(value):
+                    case Ok(value):
                         return value
             case "help":
                 self.cmd_help()
@@ -717,12 +712,12 @@ class Menu:
                 assert f, f".cmd_{other}() is not defined in class"
 
                 match f(*value):
-                    case Success(value) as success:
+                    case Ok(value) as success:
                         if success["completed"]:
                             return value
                         else:
                             return self.cli(print_items=success["print_items"])
-                    case Failure(error) as failure:
+                    case Err(error) as failure:
                         cprint(error_message(error), "red")
                         if failure["completed"]:
                             return
@@ -740,12 +735,12 @@ class MyMenu(Menu):
     def cmd_print_value(self, *value):
         print(type(self))
         print(value)
-        return Success(True, {"completed": False})
+        return Ok(True, {"completed": False})
 
     def cmd_history(self, *value):
         print(self)
         print(self.history)
-        return Success(True, {"completed": False})
+        return Ok(True, {"completed": False})
 
 
 menu = MyMenu(items)
@@ -754,7 +749,7 @@ menu = MyMenu(items)
 @menu.add_hook
 def _(self):
     print(self.__dict__)
-    return Success(True)
+    return Ok(True)
 
 
 # Here you define how the input is parsed on reaching here

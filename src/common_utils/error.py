@@ -5,7 +5,7 @@ import re
 from typing import Callable, Sequence, Any, TypeVar, Iterable
 from collections import namedtuple
 from dataclasses import dataclass, field
-from .cond import defined
+from .types import defined
 
 
 T = TypeVar("T")
@@ -60,8 +60,6 @@ def raise_error(
         raise x(None, metadata)
     else:
         raise x
-
-
 
 
 def deferror(
@@ -200,25 +198,32 @@ def error_metadata(error: Exception) -> dict[str, Any] | None:
     return metadata
 
 
-def is_error_instance(error: Any) -> bool:
-    return isinstance(error, Exception)
+def is_error(
+    error: Any,
+    cls: bool | None = None,
+    instance: bool | None = None,
+) -> bool:
+    cls = False if cls is None else cls
+    instance = True if instance is None else instance
 
-
-def is_error_class(error: Any) -> bool:
-    if is_error_instance(error):
-        return False
-    elif isinstance(error, type) and issubclass(error, Exception):
-        return True
+    if cls:
+        if type(error) is not type:
+            return False
+        elif "Error" in error.__name__:
+            return True
+        else:
+            return False
     else:
-        return False
-
-
-def is_error(error: Any) -> bool:
-    return is_error_instance(error) or is_error_class(error)
+        if type(error) is type:
+            return False
+        elif isinstance(error, Exception):
+            return True
+        else:
+            return False
 
 
 def error_class(error: Exception) -> type[Exception]:
-    if is_error_instance(error):
+    if is_error(error, cls=True):
         return type(error)
     else:
         return error
@@ -234,7 +239,7 @@ get_error_metadata = error_metadata
 
 @dataclass
 class ErrorGroup(dict[str, Exception]):
-    __match_args__ = ('errors', )
+    __match_args__ = ("errors",)
 
     def __init__(self, *specs: ErrorSpec | Exception) -> None:
         self.errors: dict[str, Exception] = {}
@@ -288,13 +293,6 @@ class ErrorGroup(dict[str, Exception]):
         except (KeyError, AttributeError):
             return False
 
-    def update(
-        self,
-        err: str,
-        msg: errorMessage = None,
-    ) -> None:
-        pass
-
     def add(
         self,
         name: str,
@@ -314,6 +312,14 @@ class ErrorGroup(dict[str, Exception]):
         )
 
         return self
+
+
+def is_error_class(x: Any) -> bool:
+    return is_error(x, cls=True)
+
+
+def is_error_instance(x: Any) -> bool:
+    return is_error(x, instance=True)
 
 
 __all__ = [

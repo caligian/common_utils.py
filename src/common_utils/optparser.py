@@ -14,17 +14,17 @@ from .error import raise_error
 from .result import Ok, Err, Result, is_ok, is_err, is_result
 from .cond import is_error
 
-OptParserParsedValue = str | bool | int | float
-OptParserParsedDict = dict[str, OptParserParsedValue | list[OptParserParsedValue]]
-OptParserProcessorCallable = Callable[[OptParserParsedValue], Any]
-OptParserProcessorSpec = (
+OptionParserParsedValue = str | bool | int | float
+OptionParserParsedDict = dict[str, OptionParserParsedValue | list[OptionParserParsedValue]]
+OptionParserProcessorCallable = Callable[[OptionParserParsedValue], Any]
+OptionParserProcessorSpec = (
     tuple[
-        OptParserProcessorCallable,
+        OptionParserProcessorCallable,
         tuple | list | None,
         dict | None,
     ]
-    | tuple[OptParserProcessorCallable, tuple | list]
-    | tuple[OptParserProcessorCallable, dict]
+    | tuple[OptionParserProcessorCallable, tuple | list]
+    | tuple[OptionParserProcessorCallable, dict]
 )
 StoreAction = argparse._StoreAction
 
@@ -56,13 +56,16 @@ def mkdefault(x: Any, y=None):
 
 
 @dataclass
-class OptParserProcessor:
+class OptionParserProcessor:
     variable: str
-    f: OptParserProcessorCallable
+    f: OptionParserProcessorCallable
     args: list | tuple = field(default_factory=lambda: [])
     kwargs: dict = field(default_factory=lambda: {})
 
-    def check(self, value: OptParserParsedValue) -> bool:
+    def check(
+        self,
+        value: OptionParserParsedValue,
+    ) -> bool:
         try:
             _value = self.f(value, *self.args, **self.kwargs)
             if is_err(_value):
@@ -77,8 +80,9 @@ class OptParserProcessor:
             return False
 
     def process(
-        self, value: OptParserParsedValue
-    ) -> Result[OptParserParsedValue, ValueError]:
+        self,
+        value: OptionParserParsedValue,
+    ) -> Result[OptionParserParsedValue, ValueError]:
         try:
             _value = self.f(value, *self.args, **self.kwargs)
             if is_result(_value):
@@ -96,11 +100,11 @@ class OptParserProcessor:
 
 
 @dataclass
-class OptParserProcessors(list):
+class OptionParserProcessors(list):
     variable: str
-    processors: list[OptParserProcessor] = field(default_factory=lambda: [])
+    processors: list[OptionParserProcessor] = field(default_factory=lambda: [])
 
-    def __getitem__(self, name: int) -> OptParserProcessor | None:
+    def __getitem__(self, name: int) -> OptionParserProcessor | None:
         try:
             return self.procesors[name]
         except IndexError:
@@ -112,27 +116,28 @@ class OptParserProcessors(list):
         except IndexError:
             return False
 
-    def pop(self, name: int) -> OptParserProcessor | None:
+    def pop(self, name: int) -> OptionParserProcessor | None:
         if self.has(name):
             return self.processors.pop(name)
 
-    def __iter__(self) -> Iterator[OptParserProcessor]:
+    def __iter__(self) -> Iterator[OptionParserProcessor]:
         return iter(self.processors)
 
     def on(
         self,
-        f: OptParserProcessorCallable,
+        f: OptionParserProcessorCallable,
         *args,
         **kwargs,
-    ) -> OptParserProcessor:
-        processor = OptParserProcessor(self.variable, f, *args, **kwargs)
+    ) -> OptionParserProcessor:
+        processor = OptionParserProcessor(self.variable, f, *args, **kwargs)
         self.processors.append(processor)
         return processor
 
     def add(
-        self, *specs: OptParserProcessorSpec | OptParserProcessorCallable
-    ) -> OptParserProcessors:
-        specs: list[OptParserProcessorSpec | OptParserProcessorSpec] = list(specs)
+        self,
+        *specs: OptionParserProcessorSpec | OptionParserProcessorCallable,
+    ) -> OptionParserProcessors:
+        specs: list[OptionParserProcessorSpec | OptionParserProcessorSpec] = list(specs)
 
         if isinstance(specs, Callable):
             specs = [specs]
@@ -162,9 +167,9 @@ class OptParserProcessors(list):
 
     def process(
         self,
-        value: OptParserParsedValue | list[OptParserParsedValue],
+        value: OptionParserParsedValue | list[OptionParserParsedValue],
         pcall: bool = True,
-    ) -> Result[OptParserParsedValue, ValueError]:
+    ) -> Result[OptionParserParsedValue, ValueError]:
         not_list = isinstance(value, list)
         value = [value] if not isinstance(value, (list, tuple)) else value
 
@@ -190,17 +195,17 @@ class OptParserProcessors(list):
 
 
 @dataclass
-class OptParser(ArgumentParser):
+class OptionParser(ArgumentParser):
     prog: str
     options: dict[str, bool] = field(default_factory=lambda: {"rest": True})
-    parsed: OptParserParsedDict = field(default_factory=lambda: {})
-    processors: dict[str, OptParserProcessors] = field(default_factory=lambda: {})
+    parsed: OptionParserParsedDict = field(default_factory=lambda: {})
+    processors: dict[str, OptionParserProcessors] = field(default_factory=lambda: {})
     aliases: dict[str, str] = field(default_factory=lambda: {})
 
     def __post_init__(self) -> None:
         self._config_set: bool = False
 
-    def config(self, *args, **kwargs) -> OptParser:
+    def config(self, *args, **kwargs) -> OptionParser:
         if self._config_set:
             return self
 
@@ -240,19 +245,19 @@ class OptParser(ArgumentParser):
     def add_processors(
         self,
         name: str,
-        specs: list[OptParserProcessorSpec]
-        | OptParserProcessorSpec
-        | OptParserProcessorCallable
+        specs: list[OptionParserProcessorSpec]
+        | OptionParserProcessorSpec
+        | OptionParserProcessorCallable
         | None = None,
-        f: Callable[[OptParserParsedValue], Any] | None = None,
+        f: Callable[[OptionParserParsedValue], Any] | None = None,
         *args,
         **kwargs,
-    ) -> OptParserProcessors:
+    ) -> OptionParserProcessors:
         name = fix_name(name)
         processors = self.processors.get(name)
 
         if processors is None:
-            processors = OptParserProcessors(name)
+            processors = OptionParserProcessors(name)
             self.processors[name] = processors
 
         if specs:
@@ -285,11 +290,11 @@ class OptParser(ArgumentParser):
 
     def add_rest_processors(
         self,
-        specs: list[OptParserProcessorSpec]
-        | OptParserProcessorSpec
-        | OptParserProcessorCallable
+        specs: list[OptionParserProcessorSpec]
+        | OptionParserProcessorSpec
+        | OptionParserProcessorCallable
         | None = None,
-        f: Callable[[OptParserParsedValue], Any] | None = None,
+        f: Callable[[OptionParserParsedValue], Any] | None = None,
         *args,
         **kwargs,
     ) -> None:
@@ -298,12 +303,12 @@ class OptParser(ArgumentParser):
     def on(
         self,
         *option: str,
-        processors: OptParserProcessorCallable
-        | OptParserProcessorSpec
-        | list[OptParserProcessorSpec]
+        processors: OptionParserProcessorCallable
+        | OptionParserProcessorSpec
+        | list[OptionParserProcessorSpec]
         | None = None,
         **option_kwargs,
-    ) -> OptParser:
+    ) -> OptionParser:
         self._raise_if_config_not_set()
         self.add_alias(*option)
 
@@ -328,14 +333,14 @@ class OptParser(ArgumentParser):
 
         return self
 
-    def __getitem__(self, var: str) -> OptParserParsedValue | None:
+    def __getitem__(self, var: str) -> OptionParserParsedValue | None:
         return self.parsed.get(var)
 
     def process(
         self,
-        parsed: OptParserParsedDict | None = None,
+        parsed: OptionParserParsedDict | None = None,
         pcall: bool = False,
-    ) -> Result[OptParserParsedDict, AssertionError]:
+    ) -> Result[OptionParserParsedDict, AssertionError]:
         self._raise_if_config_not_set()
 
         parsed = self.parsed if parsed is None else parsed
@@ -343,7 +348,7 @@ class OptParser(ArgumentParser):
             "No arguments were parsed. Have you run <obj>.parse(...)"
         )
 
-        new: OptParserParsedDict = {}
+        new: OptionParserParsedDict = {}
         for k, v in parsed.items():
             processors = self.processors.get(k)
             if processors is not None:
@@ -359,7 +364,7 @@ class OptParser(ArgumentParser):
         args: str | list[str] | None = None,
         pcall: bool = False,
         unwrap: Literal[True] = True,
-    ) -> OptParserParsedDict: ...
+    ) -> OptionParserParsedDict: ...
 
     @overload
     def parse(
@@ -367,14 +372,14 @@ class OptParser(ArgumentParser):
         args: str | list[str] | None = None,
         pcall: Literal[True] = False,
         unwrap: Literal[True] = True,
-    ) -> Result[OptParserParsedDict, AssertionError]: ...
+    ) -> Result[OptionParserParsedDict, AssertionError]: ...
 
     def parse(
         self,
         args: str | list[str] | None = None,
         pcall: bool = False,
         unwrap: bool = True,
-    ) -> Result[OptParserParsedDict, AssertionError] | OptParserParsedDict:
+    ) -> Result[OptionParserParsedDict, AssertionError] | OptionParserParsedDict:
         self._raise_if_config_not_set()
 
         args: list[str] | str = ARGV() if args is None else args
@@ -425,20 +430,20 @@ class OptParser(ArgumentParser):
             else:
                 return Err(error)
 
-
-parser = OptParser("Some CLI application")
-parser.config("Do this, do that, blah blah")
-parser.on(
-    "-i",
-    "--input-file",
-    nargs="?",
-)
-parser.add_processors(
-    "input_file", specs=(lambda x: x + "hello_", lambda x: x + " 1.5")
-)
-
-parser.on("-f", "--flag", action="store_true")
-print(parser.parse(shlex.split("-i /home/caligian/.bashrc -f")))
-
-
-__all__ = ["mkdefault", "OptParser", "ARGV", "has_argv"]
+#
+# parser = OptionParser("Some CLI application")
+# parser.config("Do this, do that, blah blah")
+# parser.on(
+#     "-i",
+#     "--input-file",
+#     nargs="?",
+# )
+# parser.add_processors(
+#     "input_file", specs=(lambda x: x + "hello_", lambda x: x + " 1.5")
+# )
+#
+# parser.on("-f", "--flag", action="store_true")
+# print(parser.parse(shlex.split("-i /home/caligian/.bashrc -f")))
+#
+#
+__all__ = ["mkdefault", "OptionParser", "ARGV", "has_argv"]

@@ -1,21 +1,53 @@
-from typing import Callable, Any, Iterator, Generator, TypeVar
-
-DefaultFactory = Callable[[], Any]
+from typing import Callable, Any, Iterator, Generator, TypeVar, overload, Literal
 
 T = TypeVar("T")
 R = TypeVar("R")
 
+DefaultFactory = Callable[[], Any]
+Mapper = Callable[[T], R]
 
-def defined(x: Any | None) -> bool:
+
+@overload
+def defined(x: T, f: Mapper) -> R: ...
+
+
+@overload
+def defined(x: None, f: Mapper | None) -> Literal[False]: ...
+
+
+@overload
+def defined(x: T, f: None) -> Literal[True]:
+    pass
+
+
+def defined(x: T | None, f: Mapper | None = None) -> bool | R:
     if x is not None:
-        return True
+        if f:
+            return f(x)
+        else:
+            return True
     else:
         return False
 
 
-def undefined(x: Any | None) -> bool:
+@overload
+def undefined(x: T, f: Mapper | None) -> Literal[False]: ...
+
+
+@overload
+def undefined(x: None, f: Mapper) -> R: ...
+
+
+@overload
+def undefined(x: None, f: None) -> Literal[True]: ...
+
+
+def undefined(x: T | None, f: Mapper | None = None) -> bool | R:
     if x is None:
-        return True
+        if f:
+            return f(x)
+        else:
+            return True
     else:
         return False
 
@@ -28,51 +60,9 @@ def literal(x: Any) -> Callable[[], Any]:
     return lambda *_args, **_kwargs: x
 
 
-def unlessNone(
-    cond: Any | None,
-    true: DefaultFactory = None,
-    false: DefaultFactory | None = None,
-) -> Any:
-    if isa(cond, bool):
-        if cond is not None:
-            if true:
-                return true()
-            else:
-                return True
-        elif false:
-            return false()
-
-    is_none = cond() is None
-    if is_none:
-        return false()
-    elif true:
-        return true()
-
-
-def whenNone(
-    cond: Any | None,
-    true: DefaultFactory = None,
-    false: DefaultFactory | None = None,
-) -> Any:
-    if isa(cond, bool):
-        if cond is None:
-            if true:
-                return true()
-            else:
-                return True
-        elif false:
-            return false()
-
-    is_none = cond() is None
-    if is_none:
-        return true()
-    elif false:
-        return false()
-
-
 def when(
-    cond: Any | None,
-    true: DefaultFactory = None,
+    cond: bool | None,
+    true: DefaultFactory | None = None,
     false: DefaultFactory | None = None,
 ) -> Any:
     if isa(cond, bool):
@@ -91,7 +81,7 @@ def when(
 
 def unless(
     cond: Any | None,
-    true: DefaultFactory = None,
+    true: DefaultFactory | None = None,
     false: DefaultFactory | None = None,
 ) -> Any:
     if isa(cond, bool):
@@ -108,41 +98,77 @@ def unless(
         return false()
 
 
+@overload
 def ifelse(
-    x: list | tuple,
+    x: dict[int | str, Any],
     cond: Callable[[Any], bool],
-    true: Callable[[Any], Any] = lambda x: x,
-    false: Callable[[Any], Any] = lambda x: x,
+    true: Callable[[Any], Any],
+    false: Callable[[Any], Any],
+    invert: bool = False,
+    inplace: bool = False,
+) -> dict: ...
+
+
+@overload
+def ifelse(
+    x: list,
+    cond: Callable[[Any], bool],
+    true: Callable[[Any], Any],
+    false: Callable[[Any], Any],
+    invert: bool = False,
+    inplace: bool = False,
+) -> list: ...
+
+
+@overload
+def ifelse(
+    x: tuple,
+    cond: Callable[[Any], bool],
+    true: Callable[[Any], Any],
+    false: Callable[[Any], Any],
+    invert: bool = False,
+    inplace: bool = False,
+) -> tuple: ...
+
+
+def ifelse(
+    x: list | tuple | dict[int | str, Any],
+    cond: Callable[[Any], bool],
+    true: Callable[[Any], Any],
+    false: Callable[[Any], Any],
     invert: bool = False,
     inplace: bool = False,
 ) -> list | tuple | dict:
-    if is_iter(x) or is_range(x) or is_generator(x):
-        x = [elem for elem in x]
+    use = x
+    index: list[int | str] | None = None
+    index = list(x.keys()) if is_dict(x) else index
+
+    if is_range(x) or is_generator(x):
+        use = [elem for elem in x]
+    elif is_dict(x):
+        use = list(x.values())
+    else:
+        use = list(use)
 
     if inplace:
-        return ifelse(
-            x.copy(),
-            cond=cond,
-            true=true,
-            false=false,
-            invert=invert,
-            inplace=inplace,
-        )
+        use = use.copy()
 
-    for i in range(len(x)):
-        elem = x[i]
+    for i in range(len(use)):
+        elem = use[i]
         _success = cond(elem)
-        success = _success and invert if invert else _success
+        success = (_success and invert) if invert else _success
 
         if success:
-            x[i] = true(elem)
+            use[i] = true(elem)
         else:
-            x[i] = false(elem)
+            use[i] = false(elem)
 
-    if isa(x, list):
-        return x
+    if isa(x, dict):
+        return dict(zip(index, use))
+    elif isa(x, list):
+        return use
     else:
-        return tuple(x)
+        return tuple(use)
 
 
 def is_bytes(s: Any) -> bool:
@@ -193,10 +219,6 @@ def is_sequence(
         return isa(x, list, tuple)
 
 
-def is_iter(x: Any) -> bool:
-    return isinstance(x, iter)
-
-
 def is_iterable(x: Any) -> bool:
     return isinstance(x, Iterator)
 
@@ -235,23 +257,23 @@ def defguard(*x_type: type) -> Callable[[Any], bool]:
 
 container = is_container
 sequence = is_sequence
-iterable = is_iter
+is_exception = is_error
+is_a = isa
 
 __all__ = [
     "container",
     "defined",
     "defguard",
     "ifelse",
-    "iterable",
     "is_bytes",
     "is_callable",
     "is_container",
     "is_dict",
     "is_error",
+    "is_exception",
     "is_float",
     "is_generator",
     "is_int",
-    "is_iter",
     "is_iterable",
     "is_list",
     "is_number",
@@ -260,11 +282,12 @@ __all__ = [
     "is_str_like",
     "is_tuple",
     "is_type",
+    "is_a",
     "isa",
     "literal",
     "sequence",
     "unless",
-    "unlessNone",
     "when",
-    "whenNone",
+    "undefined",
+    "defined",
 ]

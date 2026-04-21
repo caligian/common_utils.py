@@ -24,7 +24,7 @@ from json import (
 )
 from .table import split
 from .process import system
-from .result import Result, Ok, Err, T, E
+from .result import Ok, Err, T, E
 
 mkdir = os.makedirs
 is_dir = os.path.isdir
@@ -53,7 +53,7 @@ def has_extension(filename: str, *pattern: str | re.Pattern) -> bool:
     return False
 
 
-def read_json(filename: str) -> Result[list | dict, Exception]:
+def read_json(filename: str) -> Ok[list | dict] | Err[Exception]:
     with open(filename, "r") as fh:
         try:
             return Ok(fh_load_json(fh))
@@ -61,7 +61,7 @@ def read_json(filename: str) -> Result[list | dict, Exception]:
             return Err(error)
 
 
-def write_json(filename: str, obj: any) -> Result[str, Exception]:
+def write_json(filename: str, obj: any) -> Ok[str] | Err[Exception]:
     with open(filename, "w") as fh:
         try:
             fh_dump_json(obj, fh)
@@ -70,7 +70,7 @@ def write_json(filename: str, obj: any) -> Result[str, Exception]:
             return Err(error, {"file": filename})
 
 
-def read_pkl(filename: str) -> Result[any, Exception]:
+def read_pkl(filename: str) -> Ok[any] | Err[Exception]:
     try:
         with open(filename, "rb") as fh:
             return Ok(fh_load_pkl(fh))
@@ -78,7 +78,7 @@ def read_pkl(filename: str) -> Result[any, Exception]:
         return Err(error)
 
 
-def write_pkl(filename: str, obj: any) -> Result[str, Exception]:
+def write_pkl(filename: str, obj: any) -> Ok[str] | Err[Exception]:
     try:
         with open(filename, "wb") as fh:
             fh_dump_pkl(obj, fh)
@@ -92,7 +92,7 @@ def read_csv(
     filename: str,
     everything: bool = True,
     **kwargs,
-) -> Result[list[list[str]] | csv.reader, Exception]:
+) -> Ok[list[list[str]] | csv.reader] | Err[Exception]:
     try:
         with open(filename) as fh:
             if everything:
@@ -107,7 +107,7 @@ def write_csv(
     filename: str,
     lines: list[list[str]],
     **kwargs,
-) -> Result[str, Exception]:
+) -> Ok[str] | Err[Exception]:
     try:
         with open(filename, "w") as fh:
             writer = csv_writer(fh, **kwargs)
@@ -124,7 +124,7 @@ def slurp(
     newlines: bool = False,
     chomp: bool = True,
     binary: bool = False,
-) -> Result[any, Exception]:
+) -> Ok[any] | Err[Exception]:
     if format in ("json", "j"):
         return read_json(filename)
     elif format in ("text", "txt", "t"):
@@ -160,7 +160,7 @@ def spit(
     append_newline: bool = True,
     encoding: str = "utf-8",
     errors: str = "strict",
-) -> Result[str, Exception]:
+) -> Ok[str] | Err[Exception]:
     if format in ("json", "j"):
         return write_json(filename, obj)
     elif format in ("text", "txt", "t"):
@@ -265,7 +265,7 @@ def cp(
     makedirs: bool = False,
     overwrite: bool = True,
     **kwargs,
-) -> Result[str, PermissionError | FileNotFoundError | OSError | FileExistsError]:
+) -> Ok[str] | Err[PermissionError | FileNotFoundError | OSError | FileExistsError]:
     if not os.path.exists(src):
         return Err(FileNotFoundError(src), dict(src=src))
 
@@ -293,7 +293,7 @@ def cp(
         return Err(error, dict(src=src, dest=dest))
 
 
-def rm(path: str, **kwargs) -> Result[str, Exception]:
+def rm(path: str, **kwargs) -> Ok[str] | Err[Exception]:
     if not os.path.exists(path):
         return Err(FileNotFoundError(path), {"path": path})
     elif os.path.isdir(path):
@@ -314,7 +314,7 @@ def readlines(
     filename: str,
     binary: bool = False,
     chomp: bool = False,
-) -> Result[list[str] | list[bytes], Exception]:
+) -> Ok[list[str] | list[bytes]] | Err[Exception]:
     mode = "rb" if binary else "r"
     try:
         with open(filename, mode) as fh:
@@ -330,7 +330,7 @@ def readtext(
     filename: str,
     binary: bool = False,
     chomp: bool = True,
-) -> Result[str | bytes, Exception]:
+) -> Ok[str | bytes] | Err[Exception]:
     mode = "rb" if binary else "r"
     try:
         with open(filename, mode) as fh:
@@ -350,7 +350,7 @@ def writetext(
     append_newline: bool = True,
     encoding: str = "utf-8",
     errors: str = "strict",
-) -> Result[str, Exception]: ...
+) -> Ok[str] | Err[Exception]: ...
 
 
 @overload
@@ -361,7 +361,7 @@ def writetext(
     append_newline: bool = True,
     encoding: str = "utf-8",
     errors: str = "strict",
-) -> Result[str, Exception]: ...
+) -> Ok[str] | Err[Exception]: ...
 
 
 def writetext(
@@ -371,7 +371,7 @@ def writetext(
     append_newline: bool = True,
     encoding: str = "utf-8",
     errors: str = "strict",
-) -> Result[str, Exception]:
+) -> Ok[str] | Err[Exception]:
     mode = "w"
     use = text
 
@@ -423,7 +423,7 @@ def writelines(
     append_newline: bool = True,
     encoding: str = "utf-8",
     errors: str = "strict",
-) -> Result[str, Exception]: ...
+) -> Ok[str] | Err[Exception]: ...
 
 
 @overload
@@ -434,7 +434,7 @@ def writelines(
     append_newline: bool = True,
     encoding: str = "utf-8",
     errors: str = "strict",
-) -> Result[str, Exception]: ...
+) -> Ok[str] | Err[Exception]: ...
 
 
 def writelines(
@@ -444,7 +444,7 @@ def writelines(
     append_newline: bool = True,
     encoding: str = "utf-8",
     errors: str = "strict",
-) -> Result[str, Exception]:
+) -> Ok[str] | Err[Exception]:
     lines = text
     mode = "w"
 

@@ -13,7 +13,7 @@ from typing import (
 )
 from functools import partial
 from termcolor import cprint
-from .error import Error, ErrorGroup, is_error, is_error_class, is_error_instance
+from .error import is_error, is_error_class, is_error_instance
 
 T = TypeVar("T")
 E = TypeVar("E", bound=Exception)
@@ -51,6 +51,21 @@ class ResultBase(Generic[T, E]):
 
     def __setitem__(self, key: str, value: any) -> None:
         self.metadata[key] = value
+
+    def copy(
+        self,
+        skip_value: bool = False,
+        skip_metadata: bool = False,
+    ) -> ResultBase:
+        cls = type(self)
+        if skip_value and skip_metadata:
+            return cls(None, {}, self.type)
+        elif skip_value:
+            return cls(None, self.metadata, self.type)
+        elif skip_metadata:
+            return cls(self.value, {}, self.type)
+        else:
+            return cls(self.value, self.metadata, self.type)
 
     def is_ok(self) -> bool:
         return self.type == "Ok"
