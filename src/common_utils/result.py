@@ -1,5 +1,5 @@
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import (
     Self,
     Any,
@@ -23,7 +23,12 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 
-class ResultBase(Generic[T, E]):
+@dataclass
+class Result(Generic[T, E]):
+    value: T | E = field(default=None)
+    metadata: dict[str, Any] | None = field(default=None)
+    type: str = field(default="Ok")
+
     __slots__ = ("_value", "metadata", "type")
     __match_args__ = ("value", "metadata")
 
@@ -34,7 +39,7 @@ class ResultBase(Generic[T, E]):
         result_type: str = "Ok",
     ) -> None:
         self.value = value
-        self.metadata: dict[str, any] = {} if not metadata else metadata
+        self.metadata: dict[str, any] | None = metadata
         self.type: str = result_type
 
     def __str__(self) -> str:
@@ -47,16 +52,17 @@ class ResultBase(Generic[T, E]):
         return self.is_ok()
 
     def __getitem__(self, metadata_key: str) -> None | any:
-        return self.metadata.get(metadata_key)
+        return self.metadata.get(metadata_key) if self.metadata else None
 
     def __setitem__(self, key: str, value: any) -> None:
-        self.metadata[key] = value
+        if self.metadata:
+            self.metadata[key] = value
 
     def copy(
         self,
         skip_value: bool = False,
         skip_metadata: bool = False,
-    ) -> ResultBase:
+    ) -> Result:
         cls = type(self)
         if skip_value and skip_metadata:
             return cls(None, {}, self.type)
@@ -75,7 +81,7 @@ class ResultBase(Generic[T, E]):
 
     def throw(
         self,
-        formatter: Callable[[ResultBase], str] | None = None,
+        formatter: Callable[[Result], str] | None = None,
     ) -> None:
         if not self.is_err():
             return
@@ -91,7 +97,7 @@ class ResultBase(Generic[T, E]):
     def msg(
         self,
         elem: int = 0,
-        formatter: Callable[[ResultBase], str] | None = None,
+        formatter: Callable[[Result], str] | None = None,
     ) -> str | None:
         if not self.is_err():
             return
@@ -111,7 +117,7 @@ class ResultBase(Generic[T, E]):
         self,
         s: str | None = None,
         *metadata_keys: str,
-        formatter: Callable[[ResultBase], str] | None = None,
+        formatter: Callable[[Result], str] | None = None,
     ) -> str:
         if formatter:
             return formatter(self)
@@ -131,7 +137,7 @@ class ResultBase(Generic[T, E]):
         self,
         s: str | None = None,
         *metadata_keys: str,
-        formatter: Callable[[ResultBase], str] | None = None,
+        formatter: Callable[[Result], str] | None = None,
         err_color: str = "red",
         ok_color: str = "green",
         **print_kwargs,
@@ -145,7 +151,7 @@ class ResultBase(Generic[T, E]):
         pcall: bool = False,
         true: Callable[[T], U] | None = None,
         false: Callable[[E], U] | None = None,
-        formatter: Callable[[ResultBase], str] | None = None,
+        formatter: Callable[[Result], str] | None = None,
     ) -> T | E:
         if self.is_ok():
             if true:
@@ -159,7 +165,7 @@ class ResultBase(Generic[T, E]):
         else:
             return self.value
 
-    def and_then(self, f: Callable[[T], ResultBase], *args, **kwargs) -> ResultBase:
+    def and_then(self, f: Callable[[T], Result], *args, **kwargs) -> Result:
         if self.is_err():
             return Err(self.value, self.metadata)
 
@@ -168,7 +174,7 @@ class ResultBase(Generic[T, E]):
         except Exception as error:
             return Err(error, self.metadata)
 
-    def map(self, f: Callable[[T], U], *args, **kwargs) -> ResultBase:
+    def map(self, f: Callable[[T], U], *args, **kwargs) -> Result:
         if self.is_err():
             return Err(self.value, self.metadata)
         else:
@@ -177,7 +183,10 @@ class ResultBase(Generic[T, E]):
             except Exception as error:
                 return Err(error, self.metadata)
 
-    def merge(self, result: ResultBase) -> ResultBase:
+    def merge(self, result: Result) -> Result:
+        if self.metadata is None:
+            return result
+
         metadata = result.metadata
         metadata = metadata.copy()
 
@@ -188,7 +197,10 @@ class ResultBase(Generic[T, E]):
         result.metadata = metadata
         return result
 
-    def include(self, result: ResultBase) -> ResultBase:
+    def include(self, result: Result) -> Result:
+        if self.metadata is None:
+            return self
+
         metadata = self.metadata
         metadata = metadata.copy()
 
@@ -221,7 +233,7 @@ class ResultBase(Generic[T, E]):
             return self.value
 
 
-class Err(ResultBase[NoReturn, E]):
+class Err(Result[NoReturn, E]):
     __match_args__ = ("value", "metadata")
 
     def __init__(
@@ -233,7 +245,7 @@ class Err(ResultBase[NoReturn, E]):
         super().__init__(value, metadata, "Err")
 
 
-class Ok(ResultBase[T, NoReturn]):
+class Ok(Result[T, NoReturn]):
     __match_args__ = ("value", "metadata")
 
     def __init__(
@@ -249,7 +261,7 @@ def rsafe(f: Callable) -> Callable[[...], Ok | Err]:
     def function(*args, **kwargs) -> any:
         try:
             result = f(*args, **kwargs)
-            t_result = isinstance(result, ResultBase)
+            t_result = isinstance(result, Result)
 
             if t_result:
                 return result
@@ -270,7 +282,7 @@ def rpcall(
 ) -> Result[R, Exception]:
     try:
         result = f(*args, **kwargs)
-        t_result = isinstance(result, ResultBase)
+        t_result = isinstance(result, Result)
 
         if t_result:
             return result
@@ -283,11 +295,26 @@ def rpcall(
 
 
 def is_result(obj: Any) -> bool:
-    return isinstance(obj, ResultBase)
+    return isinstance(obj, Result)
+
+
+def if_result(obj: Any, f: Callable[[Result], Any]) -> Any:
+    if is_result(obj):
+        return f(obj)
 
 
 def is_ok(obj: Any) -> bool:
     return isinstance(obj, Ok)
+
+
+def if_ok(obj: Any, f: Callable[[Result], Any]) -> Any:
+    if is_ok(obj):
+        return f(obj)
+
+
+def if_err(obj: Any, f: Callable[[Result], Any]) -> Any:
+    if is_err(obj):
+        return f(obj)
 
 
 def is_err(obj: Any) -> bool:
@@ -299,7 +326,7 @@ def rifelse(
     true: Callable[[T], U],
     false: Callable[[E], U] = lambda error: error,
     raise_on_error: bool = False,
-    formatter: Callable[[ResultBase], str] | None = None,
+    formatter: Callable[[Result], str] | None = None,
 ) -> U:
     if obj.is_ok():
         return true(obj.value)
@@ -321,12 +348,12 @@ def runless(
 
 
 def runwrap(
-    obj: ResultBase,
+    obj: Result,
     f: Callable | None = None,
     default: any = None,
     default_factory: Callable | None = None,
     pcall: bool = False,
-    formatter: Callable[[ResultBase], str] | None = None,
+    formatter: Callable[[Result], str] | None = None,
 ) -> any:
     if is_ok(obj):
         return obj.unwrap(pcall=pcall, true=f)
@@ -377,14 +404,15 @@ def rthread(
         return Ok(value, metadata)
 
 
-Result = Ok | Err
-
 __all__ = [
     "E",
     "Err",
     "Ok",
     "Result",
     "T",
+    "if_result",
+    "if_ok",
+    "if_err",
     "is_err",
     "is_ok",
     "is_result",
