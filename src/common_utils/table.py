@@ -12,7 +12,7 @@ from .error import (
     raise_error,
     is_error,
 )
-from .types import is_a, container, sequence
+from .types import is_a, container, sequence, module
 
 # from src.common_utils.result import Ok, Err, Result, T, E, is_ok, is_err
 # from src.common_utils.error import (
@@ -40,7 +40,7 @@ deepcopy = copy.deepcopy
 shallowcopy = copy.copy
 
 
-def empty_table(x_type: type[list | dict | tuple]) -> list | dict | tuple:
+def make_empty_table(x_type: type[list | dict | tuple]) -> list | dict | tuple:
     if x_type is list:
         return []
     elif x_type is dict:
@@ -50,7 +50,7 @@ def empty_table(x_type: type[list | dict | tuple]) -> list | dict | tuple:
 
 
 @overload
-def table(
+def make_table(
     x_type: type[dict],
     size: int | None = None,
     index: list[int | str] | None = None,
@@ -61,7 +61,7 @@ def table(
 
 
 @overload
-def table(
+def make_table(
     x_type: type[list | tuple],
     size: int | None = None,
     index: list[int | str] | None = None,
@@ -71,7 +71,7 @@ def table(
 ) -> list | tuple: ...
 
 
-def table(
+def make_table(
     x_type: type[list | dict | tuple],
     size: int | None = None,
     index: list[int | str] | None = None,
@@ -124,7 +124,7 @@ def table(
     elif index or values:
         raise AssertionError("Cannot pass index and/or value with non-dict input")
     elif size == 0:
-        return empty_table(x_type)
+        return make_empty_table(x_type)
     elif size:
         res = [(default_factory() if default_factory else default) for _ in range(size)]
 
@@ -133,7 +133,7 @@ def table(
         else:
             return res
     else:
-        return empty_table()
+        return make_empty_table()
 
 
 @overload
@@ -1602,8 +1602,57 @@ def _test():
 # x = dict(a=1, b=[2, 3, 4], c=[1, 2, 3])
 # print(fassoc(x, ("b", 1, 1), 10).unwrap()
 
+table = module("table")
+table.add_methods(
+    assoc=assoc,
+    butlast=butlast,
+    car=car,
+    cat=cat,
+    cdr=cdr,
+    chunk=chunk,
+    cut=cut,
+    empty=make_empty_table,
+    new=make_table,
+    extend=extend,
+    fassoc=fassoc,
+    flatten=flatten,
+    fzf=fzf,
+    grep=grep,
+    grepv=grepv,
+    head=head,
+    lextend=lextend,
+    lmerge=lmerge,
+    lstrip=lstrip,
+    merge=merge,
+    partition=partition,
+    pop=pop,
+    popn=popn,
+    push=push,
+    reverse=reverse,
+    seq=seq,
+    shift=shift,
+    shiftn=shiftn,
+    tail=tail,
+    all=tall,
+    apply=tapply,
+    blank=tblank,
+    exclude=texclude,
+    map=tfor,
+    foreach=tfor,
+    get=tget,
+    has=thas,
+    items=titems,
+    keep=tkeep,
+    keys=tkeys,
+    reduce=treduce,
+    set=tset,
+    some=tsome,
+    values=tvalues,
+    unpush=unpush,
+)
 
 __all__ = [
+    "table",
     "Container",
     "Pattern",
     "Sequence",
@@ -1618,7 +1667,8 @@ __all__ = [
     "cdr",
     "chunk",
     "cut",
-    "empty_table",
+    "make_empty_table",
+    "make_table",
     "endswith",
     "extend",
     "fassoc",
