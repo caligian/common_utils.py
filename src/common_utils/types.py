@@ -1,10 +1,146 @@
-from typing import Callable, Any, Iterator, Generator, TypeVar, overload, Literal
+from typing import (
+    Callable,
+    Any,
+    Iterator,
+    Generator,
+    TypeVar,
+    overload,
+    Literal,
+    Set,
+)
+from dataclasses import dataclass, field
+from collections import defaultdict
+from functools import partial
 
 T = TypeVar("T")
 R = TypeVar("R")
 
 DefaultFactory = Callable[[], Any]
 Mapper = Callable[[T], R]
+
+
+@dataclass
+class defmodule:
+    """This is not a class-like module. This is made to eliminate the headache of staticmethod classes. Do not subclass it or use it otherwise. In simple words, this is class instance but has staticmethods"""
+
+    name: str
+
+    def __post_init__(self) -> None:
+        self.attribs: dict[str, Any | None] = dict()
+        self.variables: dict[str, Any | None] = dict()
+        self.methods: dict[str, Callable | None] = dict()
+
+    def __getitem__(self, attrib: str) -> Any | None:
+        return self.get(attrib)
+
+    def __iter__(self) -> tuple[str, Any]:
+        yield from self.attribs.items()
+
+    def __contains__(self, attrib: str) -> bool:
+        return attrib in self.attribs
+
+    def has(
+        self,
+        attrib: str,
+        variable: bool | None = None,
+        method: bool | None = None,
+    ) -> bool:
+        if variable ^ method:
+            if variable:
+                return attrib in self.variables
+            else:
+                return attrib in self.methods
+
+        raise ValueError(
+            f"{attrib}: .variable and .method cannot have the same truth value"
+        )
+
+    def get(self, attrib: str) -> Any | None:
+        return self.attribs.get(attrib)
+
+    def has_var(self, var: str) -> bool:
+        return self.has(var, variable=True)
+
+    def has_method(self, method: str) -> bool:
+        return self.has(method, method=True)
+
+    def get_var(
+        self,
+        var: str,
+        default: Any | None = None,
+        default_factory: Callable[[], Any] | None = None,
+    ) -> Any | None:
+        if self.has_var(var):
+            return self.variables[var]
+        elif callable(default_factory):
+            return default_factory()
+        else:
+            return default
+
+    def get_method(
+        self,
+        method: str,
+        default: Any | None = None,
+        default_factory: Callable[[], Any] | None = None,
+    ) -> Any | None:
+        if self.has_method(method):
+            return self.methods[method]
+        elif callable(default_factory):
+            return default_factory()
+        else:
+            return default
+
+    def set(
+        self,
+        attrib: str,
+        value: Any,
+        variable: bool | None = None,
+        method: bool | None = None,
+    ) -> None:
+        if variable ^ method:
+            self.attribs[attrib] = value
+            if variable:
+                self.variables[attrib] = value
+            else:
+                self.methods[attrib] = value
+            setattr(self, attrib, value)
+        else:
+            raise ValueError(
+                f"{attrib}: .variable and .method cannot have the same truth value"
+            )
+
+    def unset(self, attrib: str) -> bool:
+        if attrib not in self.attribs:
+            return False
+        elif attrib in self.variables:
+            self.variables.pop(attrib, None)
+        elif attrib in self.methods:
+            self.methods.pop(attrib, None)
+
+        del self.attribs[attrib]
+
+        try:
+            delattr(self, attrib)
+            return True
+        except AttributeError:
+            return False
+
+    def defmethod(
+        self,
+        f_name: str,
+        f: Callable,
+        *args,
+        **kwargs,
+    ) -> None:
+        f = partial(f, *args, **kwargs)
+        self.set(f_name, f, method=True)
+
+    def defvar(
+        self,
+        var: str,
+        value: Any,
+    ) -> None:
+        self.set(var, value, variable=True)
 
 
 @overload
@@ -255,6 +391,10 @@ def defguard(*x_type: type) -> Callable[[Any], bool]:
     return lambda obj: isinstance(obj, x_type)
 
 
+def is_module(x: Any) -> bool:
+    return isinstance(x, defmodule)
+
+
 container = is_container
 sequence = is_sequence
 is_exception = is_error
@@ -290,4 +430,20 @@ __all__ = [
     "when",
     "undefined",
     "defined",
+    "defmodule",
 ]
+
+# mod = defmodule("A")
+#
+#
+# def say_hello(*args) -> None:
+#     print(args)
+#     print("hello")
+#
+#
+# mod.say_hello = say_hello
+# mod.say_hello()
+#
+# mod.defmethod("say_hello", say_hello)
+# mod.say_hello()
+# See! No 'self' shenanigans - pure namespaces!
