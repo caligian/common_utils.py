@@ -30,14 +30,53 @@ class defmodule:
         self.variables: dict[str, Any | None] = dict()
         self.methods: dict[str, Callable | None] = dict()
 
-    def __getitem__(self, attrib: str) -> Any | None:
-        return self.get(attrib)
-
     def __iter__(self) -> tuple[str, Any]:
         yield from self.attribs.items()
 
+    def __getitem__(self, attrib: str) -> Any | None:
+        return self.get(attrib)
+
     def __contains__(self, attrib: str) -> bool:
         return attrib in self.attribs
+
+    def items(
+        self,
+        variable: bool | None = None,
+        method: bool | None = None,
+    ) -> list[tuple[str, Any]]:
+        if variable ^ method:
+            if variable:
+                return list(self.variables.items())
+            else:
+                return list(self.methods.items())
+        else:
+            return list(self.attribs.items())
+
+    def keys(
+        self,
+        variable: bool | None = None,
+        method: bool | None = None,
+    ) -> list[str]:
+        if variable ^ method:
+            if variable:
+                return list(self.variables.keys())
+            else:
+                return list(self.methods.keys())
+        else:
+            return list(self.attribs.keys())
+
+    def values(
+        self,
+        variable: bool | None = None,
+        method: bool | None = None,
+    ) -> list[str]:
+        if variable ^ method:
+            if variable:
+                return list(self.variables.values())
+            else:
+                return list(self.methods.values())
+        else:
+            return list(self.attribs.values())
 
     def has(
         self,
@@ -136,6 +175,23 @@ class defmodule:
         self.set(f_name, f, method=True)
 
     def defvar(
+        self,
+        var: str,
+        value: Any,
+    ) -> None:
+        self.set(var, value, variable=True)
+
+    def M(
+        self,
+        f_name: str,
+        f: Callable,
+        *args,
+        **kwargs,
+    ) -> None:
+        f = partial(f, *args, **kwargs)
+        self.set(f_name, f, method=True)
+
+    def V(
         self,
         var: str,
         value: Any,
@@ -387,24 +443,32 @@ def is_type(x: Any) -> bool:
     return isinstance(x, type)
 
 
-def defguard(*x_type: type) -> Callable[[Any], bool]:
-    return lambda obj: isinstance(obj, x_type)
-
-
 def is_module(x: Any) -> bool:
     return isinstance(x, defmodule)
 
 
+def is_class(x: Any) -> bool:
+    return is_type(x)
+
+
+def defguard(*x_type: type) -> Callable[[Any], bool]:
+    return lambda obj: isinstance(obj, x_type)
+
+
 container = is_container
 sequence = is_sequence
+exception = is_error
 is_exception = is_error
 is_a = isa
 
 __all__ = [
     "container",
-    "defined",
     "defguard",
+    "defined",
+    "defined",
+    "defmodule",
     "ifelse",
+    "is_a",
     "is_bytes",
     "is_callable",
     "is_container",
@@ -422,15 +486,12 @@ __all__ = [
     "is_str_like",
     "is_tuple",
     "is_type",
-    "is_a",
     "isa",
     "literal",
     "sequence",
+    "undefined",
     "unless",
     "when",
-    "undefined",
-    "defined",
-    "defmodule",
 ]
 
 # mod = defmodule("A")
@@ -446,4 +507,6 @@ __all__ = [
 #
 # mod.defmethod("say_hello", say_hello)
 # mod.say_hello()
+#
+#
 # See! No 'self' shenanigans - pure namespaces!
